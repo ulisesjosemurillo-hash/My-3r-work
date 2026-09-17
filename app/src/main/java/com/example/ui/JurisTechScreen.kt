@@ -1686,7 +1686,7 @@ fun ChatBubble(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (isUser) "Tú" else "JurisTech AI (Gemini)",
+                            text = if (isUser) "Tú" else "JurisTech AI",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (isUser) Color.White.copy(alpha = 0.9f) else Indigo400

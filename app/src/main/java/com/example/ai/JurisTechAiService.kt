@@ -1,34 +1,72 @@
 package com.example.ai
 
-import android.util.Log
-import com.example.BuildConfig
 import com.example.model.ChatMessage
 import com.example.model.DocumentPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import kotlin.math.max
 
 /**
- * Enhanced AI service powered by Gemini LLM (gemini-3.5-flash)
- * Supports:
- * - Whole document comprehension (all pages with structure)
- * - Multi-turn conversational history for follow-up questions
- * - Current reading point contextual awareness
- * - Robust fallback for local lexical analysis when offline or without API key
+ * Servicio de búsqueda local offline.
+ * Reemplaza la funcionalidad de Gemini garantizando privacidad y funcionamiento sin internet.
  */
 class JurisTechAiService {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
+    // Stop words para ignorar términos comunes
+    private val stopWords = setOf(
+        "el", "la", "los", "las", "un", "una", "unos", "unas",
+        "y", "e", "ni", "que", "o", "u", "pero", "mas",
+        "a", "ante", "bajo", "cabe", "con", "contra", "de", "desde", "en", "entre", "hacia", "hasta", "para", "por", "según", "sin", "so", "sobre", "tras",
+        "es", "son", "fue", "fueron", "ser", "esta", "estas", "este", "estos", "está", "están", "tiene", "tienen",
+        "qué", "quién", "quien", "quiénes", "quienes", "cuál", "cuales", "cuáles", "cómo", "como", "cuándo", "cuando", "dónde", "donde", "cuánto", "cuánta", "cuántos", "cuántas",
+        "por", "porque", "para"
+    )
+
+    // Diccionario básico de sinónimos legales y conceptuales (SOLO para encontrar fragmentos)
+    private val sinonimosLegales = mapOf(
+        "tiempo" to listOf("plazo", "días", "meses", "años", "fecha", "término", "periodo", "duración", "lapso"),
+        "plazo" to listOf("tiempo", "término", "periodo", "límite", "días"),
+        "persona" to listOf("individuo", "sujeto", "ciudadano", "parte", "interesado", "usuario"),
+        "juez" to listOf("magistrado", "tribunal", "corte", "juzgado", "autoridad"),
+        "ley" to listOf("norma", "reglamento", "estatuto", "código", "decreto", "legislación", "artículo"),
+        "pagar" to listOf("abonar", "liquidar", "remunerar", "pago", "sufragar", "costear"),
+        "dinero" to listOf("monto", "cantidad", "suma", "capital", "fondos", "pago", "precio", "costo"),
+        "notificar" to listOf("avisar", "comunicar", "informar", "emplazar", "notificación", "aviso"),
+        "contrato" to listOf("acuerdo", "pacto", "convenio"),
+        "recurso" to listOf("apelación", "queja", "impugnación")
+    )
+
+    private fun normalizarPalabra(palabra: String): String {
+        var p = palabra.lowercase().trim()
+        p = p.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        
+        if (p.endsWith("ciones")) return p.dropLast(6)
+        if (p.endsWith("cion")) return p.dropLast(4)
+        if (p.endsWith("ces") && p.length > 4) return p.dropLast(3) + "z"
+        if (p.endsWith("es") && p.length > 4) return p.dropLast(2)
+        if (p.endsWith("s") && p.length > 3) return p.dropLast(1)
+        
+        return p
+    }
+
+    private fun expandirTerminos(terminos: List<String>): Set<String> {
+        val expandidos = mutableSetOf<String>()
+        for (t in terminos) {
+            val norm = normalizarPalabra(t)
+            expandidos.add(norm)
+            
+            sinonimosLegales.forEach { (clave, lista) ->
+                val claveNorm = normalizarPalabra(clave)
+                val listaNorm = lista.map { normalizarPalabra(it) }
+                
+                if (norm == claveNorm || listaNorm.contains(norm)) {
+                    expandidos.add(claveNorm)
+                    expandidos.addAll(listaNorm)
+                }
+            }
+        }
+        return expandidos.filter { it.length > 2 }.toSet()
+    }
 
     suspend fun responderPreguntaConHistorial(
         pregunta: String,
@@ -36,193 +74,124 @@ class JurisTechAiService {
         paginas: List<DocumentPage>,
         paginaActual: Int,
         historialConversacion: List<ChatMessage>
-    ): String = withContext(Dispatchers.IO) {
-        val apiKey = try {
-            BuildConfig.GEMINI_API_KEY
-        } catch (e: Throwable) {
-            ""
-        }
-
-        if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
-            try {
-                val systemInstructionText = buildString {
-                    appendLine("Eres JurisTech AI, un asistente jurídico avanzado e interactivo integrado en un lector de documentos legales y normativos.")
-                    appendLine("Tu función principal es resolver dudas, analizar cláusulas, resumir antecedentes y responder preguntas de seguimiento (follow-up) de los usuarios.")
-                    appendLine("DOCUMENTO ACTIVO: \"$documentTitle\" (${paginas.size} páginas en total).")
-                    appendLine("El usuario se encuentra actualmente escuchando o leyendo en la Página $paginaActual del documento.")
-                    appendLine()
-                    appendLine("REGLAS OBLIGATORIAS:")
-                    appendLine("1. Basa tus respuestas en el contenido COMPLETO del documento proporcionado. Tienes acceso a todas las páginas.")
-                    appendLine("2. Si la pregunta hace referencia a lo que se acaba de hablar o a un turno anterior ('¿y qué plazo tiene eso?', '¿quién responde por ello?'), usa el historial de conversación para entender el hilo de seguimiento.")
-                    appendLine("3. Cita explícitamente la página o cláusula correspondiente cuando encuentres la base legal (ej. '[Página 2, Cláusula Primera]').")
-                    appendLine("4. Si el documento no contiene la información para responder, indícalo claramente con honestidad profesional.")
-                    appendLine("5. Formato: Responde en español, con redacción jurídica pulcra, clara, sin rodeos y estructurada en párrafos cortos o viñetas.")
-                }
-
-                // Construimos el documento completo en formato estructurado
-                val documentContextText = buildString {
-                    appendLine("--- TEXTO COMPLETO DEL DOCUMENTO (\"$documentTitle\") ---")
-                    paginas.forEach { pag ->
-                        appendLine("[INICIO PÁGINA ${pag.numero}]")
-                        appendLine(pag.texto.trim())
-                        appendLine("[FIN PÁGINA ${pag.numero}]")
-                        appendLine()
-                    }
-                    appendLine("--- FIN DEL DOCUMENTO ---")
-                    appendLine("POSICIÓN ACTUAL DEL LECTOR: Página $paginaActual.")
-                }
-
-                // Construcción de la lista multi-turn para Gemini API:
-                // contents: [ { role: "user", parts: [...] }, { role: "model", parts: [...] }, ... ]
-                val contentsArray = JSONArray()
-
-                // Primer turno user: incluye el contexto completo del documento y el primer mensaje o apertura
-                val firstUserParts = JSONArray()
-                firstUserParts.put(JSONObject().apply {
-                    put("text", "$documentContextText\n\nPor favor ten en cuenta este documento para responder a todas mis preguntas a continuación.")
-                })
-                contentsArray.put(JSONObject().apply {
-                    put("role", "user")
-                    put("parts", firstUserParts)
-                })
-
-                // Turno inicial de confirmación del modelo
-                val firstModelParts = JSONArray()
-                firstModelParts.put(JSONObject().apply {
-                    put("text", "Entendido. He procesado el documento completo '$documentTitle' (${paginas.size} páginas) y conozco que tu lectura está en la Página $paginaActual. ¿En qué puedo ayudarte o qué duda deseas resolver?")
-                })
-                contentsArray.put(JSONObject().apply {
-                    put("role", "model")
-                    put("parts", firstModelParts)
-                })
-
-                // Agregar turnos relevantes previos del historial (últimos 8 turnos de chat)
-                val relevantHistory = historialConversacion
-                    .filter { it.remitente != "Sistema" }
-                    .takeLast(8)
-
-                for (msg in relevantHistory) {
-                    val role = if (msg.isUser || msg.remitente == "Tú") "user" else "model"
-                    val partsArr = JSONArray().apply {
-                        put(JSONObject().apply { put("text", msg.texto) })
-                    }
-                    contentsArray.put(JSONObject().apply {
-                        put("role", role)
-                        put("parts", partsArr)
-                    })
-                }
-
-                // Último turno: la pregunta actual del usuario
-                val currentQuestionParts = JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("text", "Pregunta (posición actual: Página $paginaActual): $pregunta")
-                    })
-                }
-                contentsArray.put(JSONObject().apply {
-                    put("role", "user")
-                    put("parts", currentQuestionParts)
-                })
-
-                // Request body con systemInstruction
-                val jsonBody = JSONObject().apply {
-                    put("contents", contentsArray)
-                    put("systemInstruction", JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply { put("text", systemInstructionText) })
-                        })
-                    })
-                    put("generationConfig", JSONObject().apply {
-                        put("temperature", 0.2) // Baja temperatura para precisión legal
-                        put("topP", 0.95)
-                    })
-                }
-
-                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
-
-                val request = Request.Builder()
-                    .url(url)
-                    .post(requestBody)
-                    .build()
-
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string()
-
-                if (response.isSuccessful && !responseString.isNullOrBlank()) {
-                    val rootJson = JSONObject(responseString)
-                    val candidates = rootJson.optJSONArray("candidates")
-                    val firstCandidate = candidates?.optJSONObject(0)
-                    val content = firstCandidate?.optJSONObject("content")
-                    val parts = content?.optJSONArray("parts")
-                    val text = parts?.optJSONObject(0)?.optString("text")
-
-                    if (!text.isNullOrBlank()) {
-                        return@withContext text.trim()
-                    }
-                } else {
-                    Log.w("JurisTechAiService", "Gemini API devolvió código ${response.code}: $responseString")
-                }
-            } catch (e: Exception) {
-                Log.e("JurisTechAiService", "Error invocando Gemini API con historial completo", e)
+    ): String = withContext(Dispatchers.Default) {
+        
+        val currentRawTerms = extraerTerminos(pregunta)
+        var searchTermsRaw = currentRawTerms.toMutableList()
+        
+        // Lógica de preguntas de seguimiento mejorada
+        // Si la pregunta empieza con una conjunción ("y", "pero", "o") o es muy corta, arrastramos el contexto anterior
+        val esSeguimiento = pregunta.lowercase().trim().let { it.startsWith("y ") || it.startsWith("pero ") || it.startsWith("o ") } || currentRawTerms.size <= 2
+        
+        if (esSeguimiento) {
+            val recentUserMessages = historialConversacion.filter { it.isUser }.takeLast(2)
+            if (recentUserMessages.isNotEmpty()) {
+                val lastQ = recentUserMessages.last().texto
+                val historyTerms = extraerTerminos(lastQ)
+                // Fusionar manteniendo los términos únicos
+                searchTermsRaw = (currentRawTerms + historyTerms).distinct().toMutableList()
             }
         }
 
-        // Fallback local: busca en todo el documento (todas las páginas) y no solo en el fragmento visible
-        buscarRespuestaLocalEnTodoElDocumento(pregunta, paginas, paginaActual)
-    }
+        if (searchTermsRaw.isEmpty()) {
+            return@withContext "No encontré información suficiente para responder esta pregunta dentro del documento."
+        }
 
-    private fun buscarRespuestaLocalEnTodoElDocumento(
-        pregunta: String,
-        paginas: List<DocumentPage>,
-        paginaActual: Int
-    ): String {
-        val palabrasClave = pregunta
-            .lowercase()
-            .replace(Regex("[¿?¡!.,;:\"()']"), " ")
-            .split(Regex("\\s+"))
-            .filter { it.length > 3 }
+        // COBERTURA DE CONCEPTOS (Protección Estricta Antifalsos Positivos)
+        // Exigimos que el fragmento contenga al menos un % de los conceptos requeridos
+        val totalConceptosBuscados = searchTermsRaw.size
+        val conceptosMinimosRequeridos = if (totalConceptosBuscados <= 2) {
+            totalConceptosBuscados // Debe coincidir con todos si son 1 o 2
+        } else {
+            max(2, (totalConceptosBuscados * 0.6).toInt()) // Si son 4, debe coincidir con al menos 2
+        }
 
-        data class Coincidencia(val pagina: Int, val frase: String, val score: Int)
-        val coincidencias = mutableListOf<Coincidencia>()
+        // Umbral dinámico base
+        val umbralMinimo = if (totalConceptosBuscados <= 1) 2.0 else (totalConceptosBuscados * 1.5)
+
+        data class FragmentScore(val pagina: Int, val texto: String, var score: Double, var conceptsMatched: Int)
+        val candidateFragments = mutableListOf<FragmentScore>()
+
+        val preguntaCompletaLower = pregunta.lowercase().replace(Regex("[¿?¡!]"), "").trim()
 
         paginas.forEach { pagina ->
-            val frases = pagina.texto.split(Regex("[.!?\n]+"))
-            for (frase in frases) {
-                val fraseLimpia = frase.trim()
-                if (fraseLimpia.length < 15) continue
+            val bloques = pagina.texto.split(Regex("\\n\\n|\\.\\s+")).filter { it.trim().length > 20 }
+            
+            for (bloque in bloques) {
+                val bloqueLimpio = bloque.trim()
+                val palabrasBloque = bloqueLimpio
+                    .split(Regex("[^a-zA-ZáéíóúÁÉÍÓÚñÑ]+"))
+                    .filter { it.isNotBlank() }
+                    .map { normalizarPalabra(it) }
+                    .toSet()
 
-                var score = 0
-                val fraseLower = fraseLimpia.lowercase()
-                for (palabra in palabrasClave) {
-                    if (fraseLower.contains(palabra)) {
-                        score += 2
+                var score = 0.0
+                var conceptsMatched = 0
+                val bloqueLower = bloqueLimpio.lowercase()
+
+                for (rawTerm in searchTermsRaw) {
+                    val expandidos = expandirTerminos(listOf(rawTerm))
+                    
+                    var conceptFound = false
+                    for (exp in expandidos) {
+                        if (palabrasBloque.contains(exp) || palabrasBloque.any { it.startsWith(exp) }) {
+                            conceptFound = true
+                            break
+                        }
+                    }
+                    
+                    if (conceptFound) {
+                        score += 2.0
+                        conceptsMatched++
                     }
                 }
+                
+                // Filtro estricto: Si no cubre el mínimo de conceptos distintos, se descarta el fragmento por completo
+                if (conceptsMatched < conceptosMinimosRequeridos) {
+                    continue
+                }
 
-                // Prioridad si coincide en la página donde está leyendo el usuario
+                if (conceptsMatched > 1) {
+                    score *= conceptsMatched
+                }
+
+                if (preguntaCompletaLower.length > 5 && bloqueLower.contains(preguntaCompletaLower)) {
+                    score += 15.0
+                }
+
                 if (pagina.numero == paginaActual && score > 0) {
-                    score += 1
+                    score += 2.0
+                } else if (Math.abs(pagina.numero - paginaActual) <= 2 && score > 0) {
+                    score += 1.0
                 }
 
-                if (score > 0) {
-                    coincidencias.add(Coincidencia(pagina.numero, fraseLimpia, score))
+                if (score >= umbralMinimo) {
+                    candidateFragments.add(FragmentScore(pagina.numero, bloqueLimpio, score, conceptsMatched))
                 }
             }
         }
 
-        coincidencias.sortByDescending { it.score }
+        candidateFragments.sortByDescending { it.score }
+        val mejores = candidateFragments.take(3)
 
-        if (coincidencias.isEmpty()) {
-            return "No se encontraron cláusulas coincidentes directamente con esos términos en las ${paginas.size} páginas del documento. Puedes activar tu API key de Gemini en los Secretos para análisis semántico profundo y preguntas de seguimiento complejas."
+        if (mejores.isEmpty()) {
+            return@withContext "No encontré información suficiente para responder esta pregunta dentro del documento."
         }
 
-        val top = coincidencias.take(3)
-        return buildString {
-            append("Resultados encontrados en el documento completo:\n\n")
-            top.forEach { item ->
-                append("• [Pág. ${item.pagina}]: ").append(item.frase).append("\n\n")
-            }
-            append("Puedes hacer preguntas de seguimiento para profundizar en cualquiera de estos puntos.")
-        }.trim()
+        // FORMATO LÍTÉRAL EXIGIDO
+        val respuesta = java.lang.StringBuilder()
+        respuesta.append("Texto encontrado en el documento:\n")
+        mejores.forEach { frag ->
+            respuesta.append("${frag.texto}\n\nPágina ${frag.pagina}\n\n")
+        }
+
+        return@withContext respuesta.toString().trim()
+    }
+
+    private fun extraerTerminos(texto: String): List<String> {
+        return texto.lowercase()
+            .replace(Regex("[¿?¡!.,;:\"'()\\-]"), " ")
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() && !stopWords.contains(it) && it.length > 2 }
     }
 }

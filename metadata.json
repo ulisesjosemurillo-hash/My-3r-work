@@ -1,0 +1,6 @@
+{
+  "name": "JurisTech Reader AI",
+  "description": "Lector inteligente de documentos legales con síntesis de voz interactiva y asistente de IA",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

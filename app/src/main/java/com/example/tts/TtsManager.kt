@@ -87,7 +87,12 @@ class TtsManager(
             return
         }
 
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, fragmentId.toString())
+        try {
+            engine.setSpeechRate(currentSpeechRate)
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, fragmentId.toString())
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error speaking fragment", e)
+        }
     }
 
     fun stop() {
@@ -101,6 +106,47 @@ class TtsManager(
     fun setSpeechRate(rate: Float) {
         currentSpeechRate = rate
         tts?.setSpeechRate(rate)
+    }
+
+    fun getAvailableVoices(): List<String> {
+        val engine = tts ?: return emptyList()
+        return try {
+            engine.voices?.filter { it.locale.language.startsWith("es", ignoreCase = true) }
+                ?.map { it.name } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun setVoiceByName(voiceName: String) {
+        val engine = tts ?: return
+        try {
+            val targetVoice = engine.voices?.firstOrNull { it.name == voiceName }
+            if (targetVoice != null) {
+                engine.voice = targetVoice
+            }
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error setting voice", e)
+        }
+    }
+
+    fun speakDirect(text: String, onDone: () -> Unit = {}) {
+        val engine = tts ?: return
+        if (!isInitialized) return
+        try {
+            engine.setSpeechRate(currentSpeechRate)
+            val utteranceId = "direct_${System.currentTimeMillis()}"
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    mainHandler.post { onDone() }
+                }
+                override fun onError(utteranceId: String?) {}
+            })
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        } catch (e: Exception) {
+            Log.e("TtsManager", "Error speaking direct text", e)
+        }
     }
 
     fun shutdown() {

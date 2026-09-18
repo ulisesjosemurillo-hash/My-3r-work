@@ -19,5 +19,19 @@ data class RecentDocumentEntity(
     val lastFragmentIndex: Int = 0,
     val lastAccessedTimestamp: Long = System.currentTimeMillis(),
     val pagesJson: String,
-    val sourceType: String = "SAMPLE" // "SAMPLE", "IMPORTED", "PASTED"
+    val sourceType: String = "SAMPLE", // "SAMPLE", "IMPORTED", "PASTED"
+    val customCoverUri: String? = null,
+    val coverColor: Long? = null,
+    val highlightsJson: String = "[]",
+    val opinionsJson: String = "[]",
+    val bookmarksJson: String = "[]",
+    val audioCommentsJson: String = "[]",
+    val questionsHistoryJson: String = "[]",
+    val author: String = "",
+    val materia: String = "",
+    val year: String = "",
+    val description: String = "",
+    val collection: String = "",
+    val tagsJson: String = "[]",
+    val generalNotes: String = ""
 )

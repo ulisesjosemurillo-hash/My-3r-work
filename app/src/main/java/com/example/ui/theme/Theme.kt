@@ -2,42 +2,36 @@ package com.example.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Indigo500,
+private val AppColorScheme = lightColorScheme(
+    primary = JtGreenPrimary,
     onPrimary = Color.White,
-    primaryContainer = Indigo700,
+    primaryContainer = JtGreenSecondary,
     onPrimaryContainer = Color.White,
-    secondary = Emerald500,
+    secondary = JtGold,
     onSecondary = Color.White,
-    secondaryContainer = Emerald600,
-    onSecondaryContainer = Color.White,
-    tertiary = Indigo400,
-    background = Slate900,
-    onBackground = Slate100,
-    surface = Slate800,
-    onSurface = Slate100,
-    surfaceVariant = Slate850,
-    onSurfaceVariant = Slate300,
-    outline = Slate700,
-    error = Rose500,
+    background = JtBackground,
+    onBackground = JtPrimaryText,
+    surface = JtSurface,
+    onSurface = JtPrimaryText,
+    surfaceVariant = JtBackground,
+    onSurfaceVariant = JtSecondaryText,
+    outline = JtBorder,
+    error = JtError,
     onError = Color.White
 )
-
-private val LightColorScheme = DarkColorScheme // Preserves the dark slate aesthetic requested in the prompt
 
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Use our tailored dark slate theme for full fidelity to prototype
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = DarkColorScheme,
+        colorScheme = AppColorScheme,
         typography = Typography,
         content = content
     )

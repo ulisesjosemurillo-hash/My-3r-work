@@ -1,4 +1,6 @@
-package com.example.ui
+import sys
+
+code = """package com.example.ui
 
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -570,3 +572,7 @@ fun QuestionsScreen(
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/ui/JurisTechScreen.kt", "w") as f:
+    f.write(code)

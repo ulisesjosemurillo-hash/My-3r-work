@@ -311,6 +311,23 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun cerrarDocumento() {
+        ttsManager?.stop()
+        _uiState.value = _uiState.value.copy(
+            currentDocumentId = "",
+            documentTitle = "",
+            paginas = emptyList(),
+            fragmentosLectura = emptyList(),
+            indiceActual = 0,
+            lecturaActiva = false,
+            lecturaPausadaPorPregunta = false,
+            voiceStatus = "Esperando documento...",
+            showContinueButton = false,
+            isContinueEnabled = false,
+            chatMessages = emptyList()
+        )
+    }
+
     fun limpiarError() {
         _uiState.value = _uiState.value.copy(pdfErrorMessage = null)
     }

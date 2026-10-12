@@ -117,7 +117,23 @@ data class JurisTechUiState(
     val showStudyCoachDialog: Boolean = false,
     val studyCoachSelectedTab: Int = 0,
     val socraticTutorLevel: String = "Sencillo",
-    val apiKeyConfigured: Boolean = com.example.ai.GeminiApiClient.hasValidApiKey()
+    val apiKeyConfigured: Boolean = com.example.ai.GeminiApiClient.hasValidApiKey(),
+    val ttsMode: com.example.tts.TtsMode = com.example.tts.TtsMode.AUTO,
+    val activeTtsEngineType: com.example.tts.ActiveEngineType = com.example.tts.ActiveEngineType.LOCAL,
+    val isNetworkAvailable: Boolean = true,
+    val offlineVoiceInstructionsNeeded: Boolean = false,
+    val offlineInstructionsText: String = "",
+    val readerViewMode: ReaderViewMode = ReaderViewMode.STRUCTURED,
+    val structuredBlocks: List<StructuredBlock> = emptyList(),
+    val pageStructures: List<PdfPageStructure> = emptyList(),
+    val structuredOutline: List<PdfOutlineNode> = emptyList(),
+    val currentOriginalPage: Int = 1,
+    val originalPageBitmap: android.graphics.Bitmap? = null,
+    val readingAnnouncements: ReadingAnnouncementsConfig = ReadingAnnouncementsConfig(),
+    val isSemanticSearchMode: Boolean = false,
+    val semanticSearchResults: List<SemanticSearchResult> = emptyList(),
+    val isSemanticSearching: Boolean = false,
+    val selectedOutlineNodeId: String? = null
 )
 
 class JurisTechViewModel(application: Application) : AndroidViewModel(application) {
@@ -132,6 +148,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val aiService = JurisTechAiService()
     val learningEngine = com.example.ai.JurisTechLearningEngine(aiService)
+    val pdfPageRenderer = com.example.util.PdfPageRenderer(application)
     private var ttsManager: TtsManager? = null
     private val audioRecordManager = com.example.util.AudioRecordManager(application)
     private var speechHelper: com.example.util.SpeechRecognitionHelper? = null
@@ -201,9 +218,29 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 _uiState.value = _uiState.value.copy(
                     voiceStatus = "Error de voz: $errorMsg"
                 )
+            },
+            onEngineSwitched = { activeEngine, reason ->
+                _uiState.value = _uiState.value.copy(
+                    activeTtsEngineType = activeEngine,
+                    isNetworkAvailable = ttsManager?.isNetworkConnected ?: true,
+                    voiceStatus = reason
+                )
             }
         )
         ttsManager?.setSpeechRate(savedSpeechRate)
+
+        val hasSpanish = ttsManager?.hasSpanishLocalVoicesInstalled() ?: true
+        if (!hasSpanish) {
+            _uiState.value = _uiState.value.copy(
+                offlineVoiceInstructionsNeeded = true,
+                offlineInstructionsText = ttsManager?.getOfflineSetupInstructions() ?: ""
+            )
+        }
+        _uiState.value = _uiState.value.copy(
+            availableTtsVoices = ttsManager?.getAvailableVoices() ?: emptyList(),
+            activeTtsEngineType = ttsManager?.activeEngineType ?: com.example.tts.ActiveEngineType.LOCAL,
+            isNetworkAvailable = ttsManager?.isNetworkConnected ?: true
+        )
 
         // Inicializar reconocimiento de voz para respuestas orales
         speechHelper = com.example.util.SpeechRecognitionHelper(
@@ -340,12 +377,18 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         ttsManager?.stop()
         val fragmentos = SampleDocumentRepository.crearFragmentos(paginas)
+        val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(id, paginas)
+        val outline = com.example.util.PdfStructureParser.buildOutlineTree(blocks)
 
         _uiState.value = _uiState.value.copy(
             currentDocumentId = id,
             documentTitle = titulo,
             paginas = paginas,
             fragmentosLectura = fragmentos,
+            structuredBlocks = blocks,
+            pageStructures = structures,
+            structuredOutline = outline,
+            currentOriginalPage = 1,
             indiceActual = 0,
             lecturaActiva = false,
             lecturaPausadaPorPregunta = false,
@@ -360,10 +403,14 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             chatMessages = listOf(
                 ChatMessage(
                     remitente = "JurisTech AI",
-                    texto = "Documento '$titulo' cargado (${paginas.size} páginas, ${fragmentos.size} fragmentos). Puedes comenzar la lectura con '▶ Leer' o hacer preguntas en cualquier momento."
+                    texto = "Documento '$titulo' cargado (${paginas.size} páginas, ${fragmentos.size} fragmentos, ${blocks.size} bloques estructurados). Puedes comenzar la lectura con '▶ Leer' o hacer preguntas en cualquier momento."
                 )
             )
         )
+
+        viewModelScope.launch {
+            renderizarPaginaVisual(1)
+        }
 
         // Guardar documento completo y posición inicial en Room
         viewModelScope.launch {
@@ -429,11 +476,18 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             list
         } catch (_: Exception) { emptyList<String>() }
 
+        val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(entity.id, paginas)
+        val outline = com.example.util.PdfStructureParser.buildOutlineTree(blocks)
+
         _uiState.value = _uiState.value.copy(
             currentDocumentId = entity.id,
             documentTitle = entity.title,
             paginas = paginas,
             fragmentosLectura = fragmentos,
+            structuredBlocks = blocks,
+            pageStructures = structures,
+            structuredOutline = outline,
+            currentOriginalPage = paginaRestaurada,
             indiceActual = indiceRestaurado,
             lecturaActiva = false,
             lecturaPausadaPorPregunta = false,
@@ -456,8 +510,8 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             documentGeneralNotes = entity.generalNotes
         )
 
-        // Actualizar fecha de acceso reciente en Room
         viewModelScope.launch {
+            renderizarPaginaVisual(paginaRestaurada)
             repository.updateReadingProgress(entity.id, paginaRestaurada, indiceRestaurado)
         }
     }
@@ -1072,6 +1126,9 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 positionHistory = updatedHistory
             )
             persistirProgresoActual(indice)
+            if (fragmento.pagina != state.currentOriginalPage) {
+                cambiarPaginaOriginal(fragmento.pagina)
+            }
             if (state.lecturaActiva) {
                 leerFragmentoActual()
             } else {
@@ -1084,6 +1141,151 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun limpiarHistorialPosiciones() {
         _uiState.value = _uiState.value.copy(positionHistory = emptyList())
+    }
+
+    fun cambiarModoVistaLector(mode: ReaderViewMode) {
+        _uiState.value = _uiState.value.copy(readerViewMode = mode)
+        if (mode == ReaderViewMode.ORIGINAL_PAGE || mode == ReaderViewMode.SPLIT_DUAL) {
+            cambiarPaginaOriginal(_uiState.value.currentOriginalPage)
+        }
+    }
+
+    fun cambiarPaginaOriginal(pageNumber: Int) {
+        val total = _uiState.value.paginas.size.coerceAtLeast(1)
+        val targetPage = pageNumber.coerceIn(1, total)
+        _uiState.value = _uiState.value.copy(currentOriginalPage = targetPage)
+        viewModelScope.launch {
+            renderizarPaginaVisual(targetPage)
+        }
+    }
+
+    private suspend fun renderizarPaginaVisual(pageNumber: Int) {
+        val pageText = _uiState.value.paginas.firstOrNull { it.numero == pageNumber }?.texto ?: ""
+        val title = _uiState.value.documentTitle
+        var bitmap = pdfPageRenderer.renderPage(pageNumber)
+        if (bitmap == null) {
+            bitmap = pdfPageRenderer.generateBookPageBitmap(title, pageNumber, pageText)
+        }
+        _uiState.value = _uiState.value.copy(originalPageBitmap = bitmap)
+    }
+
+    fun repetirFragmentoActual() {
+        val state = _uiState.value
+        if (state.fragmentosLectura.isNotEmpty()) {
+            ttsManager?.stop()
+            leerFragmentoActual()
+        }
+    }
+
+    fun avanzarSiguienteFragmento() {
+        val state = _uiState.value
+        val next = (state.indiceActual + 1).coerceAtMost(state.fragmentosLectura.size - 1)
+        saltarAFragmento(next)
+    }
+
+    fun retrocederFragmentoAnterior() {
+        val state = _uiState.value
+        val prev = (state.indiceActual - 1).coerceAtLeast(0)
+        saltarAFragmento(prev)
+    }
+
+    fun setTtsMode(mode: com.example.tts.TtsMode) {
+        ttsManager?.setTtsMode(mode, continuePlayingCurrentFragment = _uiState.value.lecturaActiva)
+        _uiState.value = _uiState.value.copy(
+            ttsMode = mode,
+            activeTtsEngineType = ttsManager?.activeEngineType ?: com.example.tts.ActiveEngineType.LOCAL
+        )
+    }
+
+    fun setVoiceByName(voiceName: String) {
+        ttsManager?.setVoiceByName(voiceName)
+        _uiState.value = _uiState.value.copy(activeTtsVoice = voiceName)
+        prefs.edit().putString("tts_voice", voiceName).apply()
+    }
+
+    fun leerDesdeBloqueEstructurado(block: StructuredBlock) {
+        val fragIndex = _uiState.value.fragmentosLectura.indexOfFirst { it.id == block.fragmentId }
+        if (fragIndex >= 0) {
+            saltarAFragmento(fragIndex)
+            iniciarLectura()
+        }
+    }
+
+    fun leerTablaAccesible(table: StructuredTable) {
+        ttsManager?.stop()
+        val spoken = table.toAccessibleSpokenText()
+        _uiState.value = _uiState.value.copy(
+            voiceStatus = "🔊 Leyendo tabla estructurada..."
+        )
+        ttsManager?.speakDirect(spoken) {
+            _uiState.value = _uiState.value.copy(
+                voiceStatus = "Lectura de tabla completada."
+            )
+        }
+    }
+
+    fun alternarModoBusqueda(semantica: Boolean) {
+        _uiState.value = _uiState.value.copy(isSemanticSearchMode = semantica)
+    }
+
+    fun ejecutarBusquedaSemantica(query: String) {
+        val clean = query.trim()
+        if (clean.isBlank()) {
+            _uiState.value = _uiState.value.copy(semanticSearchResults = emptyList(), isSemanticSearching = false)
+            return
+        }
+        _uiState.value = _uiState.value.copy(isSemanticSearching = true)
+        viewModelScope.launch {
+            val blocks = _uiState.value.structuredBlocks
+            val terms = aiService.extraerTerminos(clean)
+            val scored = mutableListOf<SemanticSearchResult>()
+
+            blocks.forEach { block ->
+                val blockText = block.text
+                val blockLower = blockText.lowercase()
+                var matchCount = 0
+                terms.forEach { term ->
+                    if (blockLower.contains(term)) matchCount++
+                }
+                val isExact = blockLower.contains(clean.lowercase())
+                val score = if (isExact) 1.0f else (matchCount.toFloat() / terms.size.coerceAtLeast(1))
+                if (score > 0.25f || isExact) {
+                    val section = blocks.filter { it.pageNumber <= block.pageNumber && (it.type == BlockType.CHAPTER_HEADER || it.type == BlockType.ARTICLE_HEADER) }.lastOrNull()?.text ?: "Página ${block.pageNumber}"
+                    scored.add(
+                        SemanticSearchResult(
+                            fragmentId = block.fragmentId,
+                            pageNumber = block.pageNumber,
+                            sectionTitle = section.take(50),
+                            matchedText = block.text.take(180),
+                            explanation = if (isExact) "Coincidencia exacta encontrada en el texto" else "Conceptos coincidentes ($matchCount/${terms.size}): ${terms.filter { blockLower.contains(it) }.joinToString(", ")}",
+                            relevanceScore = score,
+                            isExactMatch = isExact
+                        )
+                    )
+                }
+            }
+            val sorted = scored.sortedByDescending { it.relevanceScore }.take(15)
+            _uiState.value = _uiState.value.copy(
+                semanticSearchResults = sorted,
+                isSemanticSearching = false
+            )
+        }
+    }
+
+    fun irAResultadoSemantico(result: SemanticSearchResult) {
+        val fragIndex = _uiState.value.fragmentosLectura.indexOfFirst { it.id == result.fragmentId }
+        if (fragIndex >= 0) {
+            saltarAFragmento(fragIndex)
+            cambiarPaginaOriginal(result.pageNumber)
+        }
+    }
+
+    fun actualizarConfiguracionLectura(config: ReadingAnnouncementsConfig) {
+        _uiState.value = _uiState.value.copy(readingAnnouncements = config)
+    }
+
+    fun explicarFragmentoConAi(texto: String) {
+        enviarPregunta("Explica este fragmento legal de forma sencilla, con conceptos clave y un ejemplo práctico:\n\"$texto\"")
     }
 
     // --- FILTRADO Y ORGANIZACIÓN DE BIBLIOTECA ---
@@ -1743,5 +1945,6 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         pomodoroJob?.cancel()
         speechHelper?.stopListening()
         ttsManager?.shutdown()
+        pdfPageRenderer.close()
     }
 }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -48,8 +49,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.model.*
 import com.example.ui.learning.*
+import com.example.ui.reader.*
 import com.example.ui.theme.*
 import com.example.viewmodel.JurisTechUiState
 import com.example.viewmodel.JurisTechViewModel
@@ -196,6 +199,7 @@ fun ReaderScreen(
     var showChangeCoverDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showReadingSettingsDialog by remember { mutableStateOf(false) }
+    var showTtsSettingsDialog by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
 
     var fragmentForOpinion by remember { mutableStateOf<FragmentoLectura?>(null) }
@@ -519,55 +523,26 @@ fun ReaderScreen(
                     }
                 }
 
-                // Barra de búsqueda dentro del documento
+                // Selector de modo de vista del lector: Estructurada / Original / Lado a lado
+                ReaderViewModeSelector(
+                    currentMode = uiState.readerViewMode,
+                    onSelectMode = { viewModel.cambiarModoVistaLector(it) }
+                )
+
+                // Barra de control de voz: Online Natural vs Local Offline + Auto
+                TtsVoiceModeBar(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    onOpenVoiceSettings = { showTtsSettingsDialog = true }
+                )
+
+                // Panel de búsqueda estructurada y semántica
                 if (uiState.showInDocumentSearchBar) {
-                    Surface(
-                        color = JtSurface,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Search, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedTextField(
-                                value = uiState.inDocumentSearchQuery,
-                                onValueChange = { viewModel.buscarEnDocumentoActual(it) },
-                                placeholder = { Text("Buscar palabra o artículo...", color = JtSecondaryText, fontSize = 13.sp) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent,
-                                    focusedTextColor = JtPrimaryText,
-                                    unfocusedTextColor = JtPrimaryText
-                                )
-                            )
-                            if (uiState.inDocumentSearchResults.isNotEmpty()) {
-                                val currentMatch = uiState.inDocumentSearchCurrentIndex + 1
-                                val totalMatches = uiState.inDocumentSearchResults.size
-                                Text("$currentMatch/$totalMatches", color = JtSecondaryText, fontSize = 12.sp)
-                                IconButton(onClick = { viewModel.irAAnteriorResultado() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Anterior", tint = JtPrimaryText, modifier = Modifier.size(18.dp))
-                                }
-                                IconButton(onClick = { viewModel.irASiguienteResultado() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Siguiente", tint = JtPrimaryText, modifier = Modifier.size(18.dp))
-                                }
-                            } else if (uiState.inDocumentSearchQuery.isNotBlank()) {
-                                Text("0 resultados", color = JtSecondaryText, fontSize = 11.sp)
-                            }
-                            IconButton(onClick = { viewModel.cerrarBusquedaEnDocumento() }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = JtSecondaryText, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
+                    StructuredSearchPanel(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        onClose = { viewModel.cerrarBusquedaEnDocumento() }
+                    )
                 }
             }
         },
@@ -580,96 +555,71 @@ fun ReaderScreen(
             )
         }
     ) { paddingValues ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val totalPages = if (uiState.paginas.isNotEmpty()) uiState.paginas.size else 1
-                    val currentPage = uiState.fragmentosLectura.getOrNull(uiState.indiceActual)?.pagina ?: 1
-
-                    Surface(
-                        color = JtBorder,
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text(
-                            text = "Página $currentPage de $totalPages",
-                            color = JtSecondaryText,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+        when (uiState.readerViewMode) {
+            ReaderViewMode.ORIGINAL_PAGE -> {
+                OriginalPdfPageView(
+                    bitmap = uiState.originalPageBitmap,
+                    currentPage = uiState.currentOriginalPage,
+                    totalPages = maxOf(1, uiState.paginas.size),
+                    onPreviousPage = { viewModel.cambiarPaginaOriginal(uiState.currentOriginalPage - 1) },
+                    onNextPage = { viewModel.cambiarPaginaOriginal(uiState.currentOriginalPage + 1) },
+                    modifier = Modifier.padding(paddingValues)
+                )
+            }
+            ReaderViewMode.SPLIT_DUAL -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                ) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        OriginalPdfPageView(
+                            bitmap = uiState.originalPageBitmap,
+                            currentPage = uiState.currentOriginalPage,
+                            totalPages = maxOf(1, uiState.paginas.size),
+                            onPreviousPage = { viewModel.cambiarPaginaOriginal(uiState.currentOriginalPage - 1) },
+                            onNextPage = { viewModel.cambiarPaginaOriginal(uiState.currentOriginalPage + 1) }
+                        )
+                    }
+                    HorizontalDivider(thickness = 3.dp, color = JtGreenPrimary)
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        StructuredReaderBody(
+                            uiState = uiState,
+                            viewModel = viewModel,
+                            listState = listState,
+                            context = context,
+                            onAddOpinion = { fragmentForOpinion = it },
+                            onRecordAudio = { frag ->
+                                pendingAudioFragment = frag
+                                micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            }
                         )
                     }
                 }
             }
-
-            items(uiState.fragmentosLectura.size) { index ->
-                val fragmento = uiState.fragmentosLectura[index]
-                val isCurrent = index == uiState.indiceActual
-                val isHighlighted = uiState.highlights.contains(fragmento.id)
-                val opinion = uiState.opinions.firstOrNull { it.fragmentId == fragmento.id }
-                val audioComment = uiState.audioComments.firstOrNull { it.fragmentId == fragmento.id }
-                val isRecording = uiState.isRecordingAudio && uiState.recordingFragmentId == fragmento.id
-                val isPlayingAudio = audioComment != null && uiState.playingAudioPath == audioComment.audioPath
-
-                ReaderFragmentItem(
-                    fragmento = fragmento,
-                    isCurrent = isCurrent,
-                    isHighlighted = isHighlighted,
-                    opinion = opinion,
-                    audioComment = audioComment,
-                    isRecording = isRecording,
-                    isPlayingAudio = isPlayingAudio,
-                    searchQuery = uiState.inDocumentSearchQuery,
-                    fontSizeScale = uiState.fontSizeScale,
-                    lineSpacing = uiState.lineSpacing,
-                    activeHighlightColor = uiState.activeHighlightColorHex,
-                    isUnderlineMode = uiState.isUnderlineMode,
-                    onClick = { viewModel.saltarAFragmento(index) },
-                    onToggleHighlight = { viewModel.toggleResaltado(fragmento.id) },
-                    onSelectColorAndHighlight = { hexColor ->
-                        viewModel.setActiveHighlightColor(hexColor)
-                        if (!isHighlighted) {
-                            viewModel.toggleResaltado(fragmento.id)
-                        }
+            ReaderViewMode.STRUCTURED -> {
+                StructuredReaderBody(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    listState = listState,
+                    context = context,
+                    onAddOpinion = { fragmentForOpinion = it },
+                    onRecordAudio = { frag ->
+                        pendingAudioFragment = frag
+                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                     },
-                    onCopyText = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Fragmento Jurídico", fragmento.texto))
-                        Toast.makeText(context, "Texto copiado al portapapeles", Toast.LENGTH_SHORT).show()
-                    },
-                    onShareText = {
-                        val sendIntent = Intent().apply {
-                            action = Intent.ACTION_SEND
-                            putExtra(Intent.EXTRA_TEXT, "${fragmento.texto}\n\n— Extraído de ${uiState.documentTitle} (Pág. ${fragmento.pagina})")
-                            type = "text/plain"
-                        }
-                        context.startActivity(Intent.createChooser(sendIntent, "Compartir fragmento"))
-                    },
-                    onAddOpinion = { fragmentForOpinion = fragmento },
-                    onDeleteOpinion = { if (opinion != null) viewModel.eliminarOpinion(opinion.id) },
-                    onRecordAudioToggle = {
-                        if (isRecording) {
-                            viewModel.detenerGrabacionAudio(fragmento.id, fragmento.pagina, fragmento.texto.take(80))
-                            Toast.makeText(context, "Nota de voz guardada", Toast.LENGTH_SHORT).show()
-                        } else {
-                            pendingAudioFragment = fragmento
-                            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    onPlayAudio = { audioPath -> viewModel.reproducirAudio(audioPath) },
-                    onStopAudio = { viewModel.detenerReproduccionAudio() },
-                    onDeleteAudio = { audioId ->
-                        viewModel.eliminarAudioComentario(audioId)
-                        Toast.makeText(context, "Nota de voz eliminada", Toast.LENGTH_SHORT).show()
-                    }
+                    modifier = Modifier.padding(paddingValues)
                 )
             }
         }
+    }
+
+    if (showTtsSettingsDialog) {
+        TtsSettingsDialog(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { showTtsSettingsDialog = false }
+        )
     }
 
     // Diálogo interactivo de Aprendizaje Guiado (Evocación Activa)
@@ -1019,6 +969,138 @@ fun ReaderScreen(
             },
             containerColor = JtSurface
         )
+    }
+}
+
+@Composable
+fun StructuredReaderBody(
+    uiState: JurisTechUiState,
+    viewModel: JurisTechViewModel,
+    listState: LazyListState,
+    context: Context,
+    onAddOpinion: (FragmentoLectura) -> Unit,
+    onRecordAudio: (FragmentoLectura) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (uiState.structuredBlocks.isNotEmpty()) {
+        LazyColumn(
+            state = listState,
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    val totalPages = if (uiState.paginas.isNotEmpty()) uiState.paginas.size else 1
+                    val currentPage = uiState.fragmentosLectura.getOrNull(uiState.indiceActual)?.pagina ?: 1
+
+                    Surface(
+                        color = JtBorder,
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text(
+                            text = "Lectura Estructurada • Página $currentPage de $totalPages (${uiState.structuredBlocks.size} bloques)",
+                            color = JtSecondaryText,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            items(uiState.structuredBlocks) { block ->
+                val isCurrentlyReading = block.fragmentId == uiState.indiceActual && uiState.lecturaActiva
+                StructuredBlockCard(
+                    block = block,
+                    isCurrentlyReading = isCurrentlyReading,
+                    onReadFromHere = { viewModel.leerDesdeBloqueEstructurado(block) },
+                    onExplainWithAi = { viewModel.explicarFragmentoConAi(block.text) },
+                    onToggleHighlight = { viewModel.toggleResaltado(block.fragmentId) },
+                    onSpeakTable = { table -> viewModel.leerTablaAccesible(table) }
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            state = listState,
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    val totalPages = if (uiState.paginas.isNotEmpty()) uiState.paginas.size else 1
+                    val currentPage = uiState.fragmentosLectura.getOrNull(uiState.indiceActual)?.pagina ?: 1
+
+                    Surface(
+                        color = JtBorder,
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text(
+                            text = "Página $currentPage de $totalPages",
+                            color = JtSecondaryText,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            items(uiState.fragmentosLectura.size) { index ->
+                val fragmento = uiState.fragmentosLectura[index]
+                val isCurrent = index == uiState.indiceActual
+                val isHighlighted = uiState.highlights.contains(fragmento.id)
+                val opinion = uiState.opinions.firstOrNull { it.fragmentId == fragmento.id }
+                val audioComment = uiState.audioComments.firstOrNull { it.fragmentId == fragmento.id }
+                val isRecording = uiState.isRecordingAudio && uiState.recordingFragmentId == fragmento.id
+                val isPlayingAudio = audioComment != null && uiState.playingAudioPath == audioComment.audioPath
+
+                ReaderFragmentItem(
+                    fragmento = fragmento,
+                    isCurrent = isCurrent,
+                    isHighlighted = isHighlighted,
+                    opinion = opinion,
+                    audioComment = audioComment,
+                    isRecording = isRecording,
+                    isPlayingAudio = isPlayingAudio,
+                    searchQuery = uiState.inDocumentSearchQuery,
+                    fontSizeScale = uiState.fontSizeScale,
+                    lineSpacing = uiState.lineSpacing,
+                    activeHighlightColor = uiState.activeHighlightColorHex,
+                    isUnderlineMode = uiState.isUnderlineMode,
+                    onClick = { viewModel.saltarAFragmento(index) },
+                    onToggleHighlight = { viewModel.toggleResaltado(fragmento.id) },
+                    onSelectColorAndHighlight = { hexColor ->
+                        viewModel.setActiveHighlightColor(hexColor)
+                        if (!isHighlighted) {
+                            viewModel.toggleResaltado(fragmento.id)
+                        }
+                    },
+                    onCopyText = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Fragmento Jurídico", fragmento.texto))
+                        Toast.makeText(context, "Texto copiado al portapapeles", Toast.LENGTH_SHORT).show()
+                    },
+                    onShareText = {
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, "${fragmento.texto}\n\n— Extraído de ${uiState.documentTitle} (Pág. ${fragmento.pagina})")
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Compartir fragmento"))
+                    },
+                    onAddOpinion = { onAddOpinion(fragmento) },
+                    onDeleteOpinion = { if (opinion != null) viewModel.eliminarOpinion(opinion.id) },
+                    onRecordAudioToggle = { onRecordAudio(fragmento) },
+                    onPlayAudio = { audioPath -> viewModel.reproducirAudio(audioPath) },
+                    onStopAudio = { viewModel.detenerReproduccionAudio() },
+                    onDeleteAudio = { audioId ->
+                        viewModel.eliminarAudioComentario(audioId)
+                        Toast.makeText(context, "Nota de voz eliminada", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -1577,6 +1659,11 @@ fun IndexAndBookmarksModal(
                         onClick = { selectedIndexTab = 3 },
                         text = { Text("Historial (${uiState.positionHistory.size})", fontSize = 12.sp) }
                     )
+                    Tab(
+                        selected = selectedIndexTab == 4,
+                        onClick = { selectedIndexTab = 4 },
+                        text = { Text("Capítulos (${uiState.structuredOutline.size})", fontSize = 12.sp) }
+                    )
                 }
             }
         },
@@ -1872,6 +1959,61 @@ fun IndexAndBookmarksModal(
                                                 }
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 Text(entry.snippet, fontSize = 11.sp, color = JtSecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    4 -> {
+                        // Lista jerárquica de Capítulos y Esquema del documento
+                        if (uiState.structuredOutline.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("No se detectaron capítulos o marcadores en este documento.", color = JtSecondaryText, fontSize = 13.sp)
+                            }
+                        } else {
+                            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(uiState.structuredOutline) { node ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                onSelectFragment(node.fragmentId)
+                                                onSelectPage(node.pageNumber)
+                                            },
+                                        colors = CardDefaults.cardColors(containerColor = JtBackground),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (node.level <= 1) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                                contentDescription = null,
+                                                tint = JtGreenPrimary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = node.title,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (node.level <= 1) FontWeight.Bold else FontWeight.Normal,
+                                                color = JtPrimaryText,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = JtBorder
+                                            ) {
+                                                Text(
+                                                    text = "Pág. ${node.pageNumber}",
+                                                    fontSize = 11.sp,
+                                                    color = JtSecondaryText,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
                                             }
                                         }
                                     }

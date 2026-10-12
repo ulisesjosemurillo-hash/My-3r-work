@@ -188,7 +188,7 @@ class JurisTechAiService {
         return@withContext respuesta.toString().trim()
     }
 
-    private fun extraerTerminos(texto: String): List<String> {
+    fun extraerTerminos(texto: String): List<String> {
         return texto.lowercase()
             .replace(Regex("[¿?¡!.,;:\"'()\\-]"), " ")
             .split(Regex("\\s+"))

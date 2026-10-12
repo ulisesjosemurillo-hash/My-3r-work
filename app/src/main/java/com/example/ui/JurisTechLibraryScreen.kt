@@ -200,8 +200,8 @@ fun JurisTechLibraryScreen(
                         Icon(Icons.Default.UploadFile, contentDescription = null, tint = JtGreenPrimary)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Importar archivo PDF o TXT", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Carga leyes desde la memoria del teléfono", color = JtSecondaryText, fontSize = 11.sp)
+                            Text("Importar PDF, Word (.docx) o TXT", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Carga libros, leyes y documentos desde la memoria", color = JtSecondaryText, fontSize = 11.sp)
                         }
                     }
 
@@ -687,6 +687,14 @@ fun JurisTechLibraryScreen(
             containerColor = JtSurface
         )
     }
+
+    if (uiState.showStudyCoachDialog) {
+        com.example.ui.learning.StudyCoachDialog(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { viewModel.setShowStudyCoachDialog(false) }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -823,6 +831,56 @@ private fun FilledLibraryView(
         )
 
         Spacer(modifier = Modifier.height(8.dp))
+
+        // Banner de Repaso Espaciado si hay conceptos pendientes hoy
+        if (uiState.dueCardsCount > 0) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clickable { viewModel.setShowStudyCoachDialog(true, 1) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = "Repaso",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Repaso Espaciado Pendiente",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "${uiState.dueCardsCount} conceptos para consolidar hoy",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Ir a Repaso",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+        }
 
         // Barra de Colecciones y Filtros
         Row(

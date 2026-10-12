@@ -51,6 +51,13 @@ data class ExamQuestion(
     val referenciaLegal: String = ""
 )
 
+data class DocumentIndexEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val pageNumber: Int,
+    val fragmentIndex: Int
+)
+
 data class PositionHistoryItem(
     val fragmentIndex: Int,
     val pageNumber: Int,
@@ -66,7 +73,10 @@ data class FragmentOpinion(
     val textoFragmento: String,
     val opinion: String,
     val tag: String = "",
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val selectedText: String = textoFragmento,
+    val startOffset: Int = 0,
+    val endOffset: Int = 0
 )
 
 data class BookBookmark(
@@ -86,7 +96,10 @@ data class AudioComment(
     val snippet: String = "",
     val audioPath: String = "",
     val durationSeconds: Int = 0,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val selectedText: String = snippet,
+    val startOffset: Int = 0,
+    val endOffset: Int = 0
 )
 
 data class SearchResultItem(

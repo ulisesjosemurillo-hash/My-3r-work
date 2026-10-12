@@ -33,5 +33,6 @@ data class RecentDocumentEntity(
     val description: String = "",
     val collection: String = "",
     val tagsJson: String = "[]",
-    val generalNotes: String = ""
+    val generalNotes: String = "",
+    val positionHistoryJson: String = "[]"
 )

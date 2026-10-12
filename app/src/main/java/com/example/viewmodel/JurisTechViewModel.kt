@@ -90,7 +90,34 @@ data class JurisTechUiState(
     val isPodcastPlaying: Boolean = false,
     val comparisonResult: String = "",
     val isComparingDocs: Boolean = false,
-    val legalReportText: String = ""
+    val legalReportText: String = "",
+    val learningMode: ReaderLearningMode = ReaderLearningMode.FREE_READING,
+    val guidedBlockSize: Int = 3,
+    val fragmentsInCurrentBlock: Int = 0,
+    val activeGuidedQuestion: GuidedQuestion? = null,
+    val showGuidedQuestionDialog: Boolean = false,
+    val guidedAnswerInput: String = "",
+    val isEvaluatingAnswer: Boolean = false,
+    val guidedEvaluationResult: EvaluationResult? = null,
+    val isVoiceListening: Boolean = false,
+    val voiceListeningStatus: String = "",
+    val dueCards: List<com.example.data.local.learning.SpacedRepetitionEntity> = emptyList(),
+    val currentReviewCardIndex: Int = 0,
+    val showReviewAnswer: Boolean = false,
+    val dueCardsCount: Int = 0,
+    val cornellNotes: List<CornellNoteItem> = emptyList(),
+    val activeCornellNote: CornellNoteItem? = null,
+    val isGeneratingCornell: Boolean = false,
+    val dualCodingMap: DualCodingConceptMap? = null,
+    val isGeneratingDualCoding: Boolean = false,
+    val studyStats: StudySessionStats = StudySessionStats(),
+    val isPomodoroActive: Boolean = false,
+    val pomodoroRemainingSeconds: Int = 25 * 60,
+    val pomodoroIsBreak: Boolean = false,
+    val showStudyCoachDialog: Boolean = false,
+    val studyCoachSelectedTab: Int = 0,
+    val socraticTutorLevel: String = "Sencillo",
+    val apiKeyConfigured: Boolean = com.example.ai.GeminiApiClient.hasValidApiKey()
 )
 
 class JurisTechViewModel(application: Application) : AndroidViewModel(application) {
@@ -99,11 +126,16 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     val uiState: StateFlow<JurisTechUiState> = _uiState.asStateFlow()
 
     private val database = AppDatabase.getDatabase(application)
-    private val repository = RecentDocumentRepository(database.recentDocumentDao())
+    private val highlightDao = database.highlightDao()
+    private val repository = RecentDocumentRepository(database.recentDocumentDao(), highlightDao)
+    val studyRepository = com.example.data.local.learning.StudyRepository(database.studyDao())
 
     private val aiService = JurisTechAiService()
+    val learningEngine = com.example.ai.JurisTechLearningEngine(aiService)
     private var ttsManager: TtsManager? = null
     private val audioRecordManager = com.example.util.AudioRecordManager(application)
+    private var speechHelper: com.example.util.SpeechRecognitionHelper? = null
+    private var pomodoroJob: kotlinx.coroutines.Job? = null
     private val prefs = application.getSharedPreferences("juristech_prefs", android.content.Context.MODE_PRIVATE)
 
     init {
@@ -111,11 +143,15 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         val savedFontSizeScale = prefs.getFloat("font_size_scale", 1.0f)
         val savedLineSpacing = prefs.getFloat("line_spacing", 1.5f)
         val savedVoice = prefs.getString("tts_voice", "") ?: ""
+        val savedUnderline = prefs.getBoolean("is_underline_mode", false)
+        val savedHighlightColor = prefs.getString("highlight_color", "#FFF59D") ?: "#FFF59D"
         _uiState.value = _uiState.value.copy(
             speechRate = savedSpeechRate,
             fontSizeScale = savedFontSizeScale,
             lineSpacing = savedLineSpacing,
-            activeTtsVoice = savedVoice
+            activeTtsVoice = savedVoice,
+            isUnderlineMode = savedUnderline,
+            activeHighlightColorHex = savedHighlightColor
         )
 
         ttsManager = TtsManager(
@@ -133,15 +169,29 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 val state = _uiState.value
                 if (state.lecturaActiva) {
                     val nextIndex = state.indiceActual + 1
-                    if (nextIndex < state.fragmentosLectura.size) {
-                        _uiState.value = _uiState.value.copy(indiceActual = nextIndex)
+                    val newBlockCount = state.fragmentsInCurrentBlock + 1
+                    if (state.learningMode == ReaderLearningMode.GUIDED_LEARNING && newBlockCount >= state.guidedBlockSize) {
+                        _uiState.value = _uiState.value.copy(
+                            indiceActual = if (nextIndex < state.fragmentosLectura.size) nextIndex else state.indiceActual,
+                            lecturaActiva = false,
+                            fragmentsInCurrentBlock = 0,
+                            voiceStatus = "🧠 Bloque completado. Momento de evocación activa."
+                        )
+                        persistirProgresoActual(state.indiceActual)
+                        activarPreguntaGuiada()
+                    } else if (nextIndex < state.fragmentosLectura.size) {
+                        _uiState.value = _uiState.value.copy(
+                            indiceActual = nextIndex,
+                            fragmentsInCurrentBlock = newBlockCount
+                        )
                         persistirProgresoActual(nextIndex)
                         leerFragmentoActual()
                     } else {
                         _uiState.value = _uiState.value.copy(
                             lecturaActiva = false,
                             voiceStatus = "Lectura finalizada.",
-                            showContinueButton = false
+                            showContinueButton = false,
+                            fragmentsInCurrentBlock = 0
                         )
                         persistirProgresoActual(state.indiceActual)
                     }
@@ -153,6 +203,40 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
         )
+        ttsManager?.setSpeechRate(savedSpeechRate)
+
+        // Inicializar reconocimiento de voz para respuestas orales
+        speechHelper = com.example.util.SpeechRecognitionHelper(
+            context = application,
+            onResultText = { recognizedText ->
+                _uiState.value = _uiState.value.copy(
+                    guidedAnswerInput = recognizedText,
+                    isVoiceListening = false,
+                    voiceListeningStatus = "Voz capturada correctamente."
+                )
+            },
+            onListeningStateChanged = { listening, status ->
+                _uiState.value = _uiState.value.copy(
+                    isVoiceListening = listening,
+                    voiceListeningStatus = status
+                )
+            }
+        )
+
+        // Observar repetición espaciada en Room
+        viewModelScope.launch {
+            studyRepository.getDueCardsFlow().collect { cards ->
+                _uiState.value = _uiState.value.copy(
+                    dueCards = cards,
+                    dueCardsCount = cards.size
+                )
+            }
+        }
+
+        // Cargar estadísticas iniciales
+        viewModelScope.launch {
+            actualizarEstadisticasEstudio()
+        }
 
         // Cargar voces disponibles
         recargarVocesDisponibles()
@@ -426,18 +510,66 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun toggleResaltado(fragmentId: Int) {
         val currentHighlights = _uiState.value.highlights.toMutableSet()
-        if (currentHighlights.contains(fragmentId)) {
-            currentHighlights.remove(fragmentId)
-        } else {
+        val isAdding = !currentHighlights.contains(fragmentId)
+        if (isAdding) {
             currentHighlights.add(fragmentId)
+        } else {
+            currentHighlights.remove(fragmentId)
         }
         _uiState.value = _uiState.value.copy(highlights = currentHighlights)
 
         val docId = _uiState.value.currentDocumentId
         if (docId.isNotBlank()) {
+            val frag = _uiState.value.fragmentosLectura.firstOrNull { it.id == fragmentId }
             viewModelScope.launch {
                 repository.updateHighlights(docId, currentHighlights)
+                if (isAdding && frag != null) {
+                    val highlightEntity = com.example.data.local.Highlight(
+                        documentId = docId,
+                        pageNumber = frag.pagina,
+                        fragmentId = frag.id,
+                        selectedText = frag.texto,
+                        startOffset = 0,
+                        endOffset = frag.texto.length,
+                        color = _uiState.value.activeHighlightColorHex,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    repository.saveHighlight(highlightEntity)
+                } else {
+                    repository.removeHighlightsByFragment(docId, fragmentId)
+                }
             }
+        }
+    }
+
+    fun addCustomHighlight(
+        pageNumber: Int,
+        fragmentId: Int,
+        selectedText: String,
+        startOffset: Int = 0,
+        endOffset: Int = selectedText.length,
+        color: String = _uiState.value.activeHighlightColorHex
+    ) {
+        val docId = _uiState.value.currentDocumentId
+        if (docId.isBlank() || selectedText.isBlank()) return
+        viewModelScope.launch {
+            val highlight = com.example.data.local.Highlight(
+                documentId = docId,
+                pageNumber = pageNumber,
+                fragmentId = fragmentId,
+                selectedText = selectedText,
+                startOffset = startOffset,
+                endOffset = endOffset,
+                color = color,
+                timestamp = System.currentTimeMillis()
+            )
+            repository.saveHighlight(highlight)
+        }
+    }
+
+    fun removeHighlight(highlightId: String) {
+        viewModelScope.launch {
+            repository.removeHighlightById(highlightId)
         }
     }
 
@@ -713,52 +845,19 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
         _uiState.value = _uiState.value.copy(
             isProcessingPdf = true,
-            pdfProgressPercent = 0,
-            pdfProgressText = "Abriendo archivo...",
+            pdfProgressPercent = 5,
+            pdfProgressText = "Abriendo y analizando archivo...",
             fileNameLabel = nombreArchivo
         )
 
         viewModelScope.launch {
             try {
-                val isTxt = nombreArchivo.lowercase().endsWith(".txt")
-                val isPdf = nombreArchivo.lowercase().endsWith(".pdf") || uri.toString().contains("pdf", ignoreCase = true)
-
-                if (isTxt) {
-                    _uiState.value = _uiState.value.copy(
-                        pdfProgressPercent = 40,
-                        pdfProgressText = "Leyendo texto plano..."
-                    )
-                    val texto = withContext(Dispatchers.IO) {
-                        getApplication<Application>().contentResolver.openInputStream(uri)?.use { stream ->
-                            stream.bufferedReader(Charsets.UTF_8).readText()
-                        } ?: ""
-                    }
-                    if (texto.isBlank()) {
-                        _uiState.value = _uiState.value.copy(
-                            isProcessingPdf = false,
-                            pdfErrorMessage = "El archivo de texto está vacío."
-                        )
-                        return@launch
-                    }
-                    _uiState.value = _uiState.value.copy(
-                        isProcessingPdf = false,
-                        pdfProgressPercent = 100,
-                        pdfProgressText = "Documento procesado correctamente."
-                    )
-                    procesarTextoImportado(nombreArchivo, texto)
-                    return@launch
-                }
-
-                _uiState.value = _uiState.value.copy(
-                    pdfProgressText = "Cargando documento PDF...",
-                    pdfProgressPercent = 5
-                )
-
-                val result = PdfExtractor.extractTextFromPdf(
+                val result = com.example.util.DocumentExtractor.extractDocument(
                     context = getApplication(),
                     uri = uri,
+                    fileName = nombreArchivo,
                     onProgress = { current, total, text ->
-                        val percent = ((current.toFloat() / total) * 100).toInt().coerceIn(5, 98)
+                        val percent = if (total > 0) ((current.toFloat() / total) * 100).toInt().coerceIn(5, 98) else 50
                         _uiState.value = _uiState.value.copy(
                             pdfProgressPercent = percent,
                             pdfProgressText = text
@@ -780,7 +879,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 }.onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         isProcessingPdf = false,
-                        pdfErrorMessage = "No se pudo abrir este PDF. Puede estar dañado, protegido, ser un PDF escaneado o no ser compatible.",
+                        pdfErrorMessage = error.message ?: "No se pudo abrir este archivo. Puede estar dañado o ser un PDF escaneado sin texto seleccionable.",
                         pdfProgressText = "No se pudo procesar el documento."
                     )
                 }
@@ -1379,8 +1478,270 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
+    // --- MÉTODOS DE ENTRENADOR DE APRENDIZAJE E IA COGNITIVA ---
+
+    fun setReaderLearningMode(mode: ReaderLearningMode) {
+        _uiState.value = _uiState.value.copy(
+            learningMode = mode,
+            fragmentsInCurrentBlock = 0
+        )
+        val status = when (mode) {
+            ReaderLearningMode.FREE_READING -> "Modo Lectura Libre activado: escucha continua."
+            ReaderLearningMode.GUIDED_LEARNING -> "Modo Aprendizaje Guiado activado: pausas y preguntas por bloque."
+            ReaderLearningMode.SPACED_REVIEW -> "Modo Repaso Espaciado: consolidación de memoria."
+        }
+        _uiState.value = _uiState.value.copy(voiceStatus = status)
+    }
+
+    fun setGuidedBlockSize(size: Int) {
+        _uiState.value = _uiState.value.copy(guidedBlockSize = size.coerceIn(1, 10))
+    }
+
+    fun setShowStudyCoachDialog(show: Boolean, tab: Int = 0) {
+        _uiState.value = _uiState.value.copy(
+            showStudyCoachDialog = show,
+            studyCoachSelectedTab = tab
+        )
+        if (show) {
+            viewModelScope.launch {
+                actualizarEstadisticasEstudio()
+            }
+        }
+    }
+
+    fun setSocraticTutorLevel(level: String) {
+        _uiState.value = _uiState.value.copy(socraticTutorLevel = level)
+    }
+
+    fun activarPreguntaGuiada() {
+        val state = _uiState.value
+        if (state.fragmentosLectura.isEmpty()) return
+        val currentFrag = state.fragmentosLectura.getOrNull(state.indiceActual) ?: return
+
+        _uiState.value = _uiState.value.copy(
+            isEvaluatingAnswer = false,
+            guidedEvaluationResult = null,
+            guidedAnswerInput = "",
+            showGuidedQuestionDialog = true,
+            voiceStatus = "🧠 Comprobación de evocación activa..."
+        )
+
+        viewModelScope.launch {
+            val q = learningEngine.generarPreguntaEvocacion(
+                documentTitle = state.documentTitle,
+                fragmentoTexto = currentFrag.texto,
+                pagina = currentFrag.pagina,
+                fragmentoId = currentFrag.id
+            )
+            _uiState.value = _uiState.value.copy(
+                activeGuidedQuestion = q
+            )
+        }
+    }
+
+    fun cerrarDialogoPreguntaGuiada() {
+        _uiState.value = _uiState.value.copy(showGuidedQuestionDialog = false)
+    }
+
+    fun setGuidedAnswerInput(text: String) {
+        _uiState.value = _uiState.value.copy(guidedAnswerInput = text)
+    }
+
+    fun toggleVoiceListening() {
+        if (_uiState.value.isVoiceListening) {
+            speechHelper?.stopListening()
+        } else {
+            speechHelper?.startListening()
+        }
+    }
+
+    fun enviarRespuestaGuiada() {
+        val state = _uiState.value
+        val q = state.activeGuidedQuestion ?: return
+        val ans = state.guidedAnswerInput.trim()
+        if (ans.isBlank()) return
+
+        val currentFrag = state.fragmentosLectura.getOrNull(state.indiceActual)
+        val fragText = currentFrag?.texto ?: q.contextSnippet
+
+        _uiState.value = _uiState.value.copy(isEvaluatingAnswer = true)
+
+        viewModelScope.launch {
+            val eval = learningEngine.evaluarRespuestaSemantica(
+                pregunta = q,
+                respuestaUsuario = ans,
+                fragmentoTexto = fragText,
+                documentTitle = state.documentTitle
+            )
+
+            _uiState.value = _uiState.value.copy(
+                isEvaluatingAnswer = false,
+                guidedEvaluationResult = eval
+            )
+
+            // Registrar en estadísticas y programar en Repaso Espaciado automáticamente
+            studyRepository.recordStudySession(
+                documentId = state.currentDocumentId,
+                documentTitle = state.documentTitle,
+                mode = "GUIDED",
+                durationMinutes = 5,
+                questionsAnswered = 1,
+                questionsCorrect = if (eval.isUnderstood) 1 else 0,
+                selfReflection = if (eval.isUnderstood) "Concepto comprendido" else "Requiere refuerzo"
+            )
+
+            // Auto-guardar en repaso espaciado
+            studyRepository.saveOrUpdateCard(
+                documentId = state.currentDocumentId,
+                concept = q.concept,
+                question = q.questionText,
+                answer = eval.fullExplanation,
+                sourcePage = q.pageNumber,
+                intervalDays = if (eval.isUnderstood) 3 else 1,
+                correctCount = if (eval.isUnderstood) 1 else 0,
+                failCount = if (!eval.isUnderstood) 1 else 0
+            )
+
+            actualizarEstadisticasEstudio()
+        }
+    }
+
+    fun toggleShowReviewAnswer() {
+        _uiState.value = _uiState.value.copy(showReviewAnswer = !_uiState.value.showReviewAnswer)
+    }
+
+    fun calificarTarjetaRepaso(rating: Int) { // 0: No lo recordé, 1: Me costó, 2: Lo recordé
+        val state = _uiState.value
+        val card = state.dueCards.getOrNull(state.currentReviewCardIndex) ?: return
+
+        val (nextInterval, nextEase) = learningEngine.calcularProximoRepaso(
+            card.intervalDays,
+            card.easeFactor,
+            rating
+        )
+
+        viewModelScope.launch {
+            studyRepository.recordReviewOutcome(
+                cardId = card.id,
+                isSuccess = rating > 0,
+                newIntervalDays = nextInterval,
+                newEaseFactor = nextEase
+            )
+
+            actualizarEstadisticasEstudio()
+
+            val nextIndex = if (state.currentReviewCardIndex + 1 < state.dueCards.size) {
+                state.currentReviewCardIndex + 1
+            } else 0
+
+            _uiState.value = _uiState.value.copy(
+                currentReviewCardIndex = nextIndex,
+                showReviewAnswer = false
+            )
+        }
+    }
+
+    fun generarCornellPaginaActual() {
+        val state = _uiState.value
+        val pagNum = obtenerPaginaActual()
+        val pag = state.paginas.firstOrNull { it.numero == pagNum } ?: return
+
+        _uiState.value = _uiState.value.copy(isGeneratingCornell = true)
+
+        viewModelScope.launch {
+            val note = learningEngine.generarNotasCornell(
+                documentTitle = state.documentTitle,
+                paginaTexto = pag.texto,
+                pagina = pagNum
+            )
+            studyRepository.saveCornellNote(note)
+            _uiState.value = _uiState.value.copy(
+                activeCornellNote = note,
+                isGeneratingCornell = false
+            )
+        }
+    }
+
+    fun generarCodificacionDualPaginaActual() {
+        val state = _uiState.value
+        val pagNum = obtenerPaginaActual()
+        val pag = state.paginas.firstOrNull { it.numero == pagNum } ?: return
+
+        _uiState.value = _uiState.value.copy(isGeneratingDualCoding = true)
+
+        viewModelScope.launch {
+            val map = learningEngine.generarCodificacionDual(
+                documentTitle = state.documentTitle,
+                texto = pag.texto,
+                pagina = pagNum
+            )
+            _uiState.value = _uiState.value.copy(
+                dualCodingMap = map,
+                isGeneratingDualCoding = false
+            )
+        }
+    }
+
+    fun iniciarPomodoro() {
+        pomodoroJob?.cancel()
+        _uiState.value = _uiState.value.copy(isPomodoroActive = true)
+        pomodoroJob = viewModelScope.launch {
+            while (_uiState.value.isPomodoroActive && _uiState.value.pomodoroRemainingSeconds > 0) {
+                kotlinx.coroutines.delay(1000)
+                val remaining = _uiState.value.pomodoroRemainingSeconds - 1
+                if (remaining <= 0) {
+                    val wasBreak = _uiState.value.pomodoroIsBreak
+                    val newBreak = !wasBreak
+                    _uiState.value = _uiState.value.copy(
+                        pomodoroIsBreak = newBreak,
+                        pomodoroRemainingSeconds = if (newBreak) 5 * 60 else 25 * 60,
+                        isPomodoroActive = false,
+                        voiceStatus = if (newBreak) "☕ Tiempo de descanso Pomodoro (5 min)." else "🎯 Momento de concentración en la lectura."
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(pomodoroRemainingSeconds = remaining)
+                }
+            }
+        }
+    }
+
+    fun pausarPomodoro() {
+        pomodoroJob?.cancel()
+        _uiState.value = _uiState.value.copy(isPomodoroActive = false)
+    }
+
+    fun reiniciarPomodoro(minutos: Int = 25) {
+        pomodoroJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            isPomodoroActive = false,
+            pomodoroRemainingSeconds = minutos * 60,
+            pomodoroIsBreak = false
+        )
+    }
+
+    fun consultarTutorSocraticoNivel(nivel: String) {
+        _uiState.value = _uiState.value.copy(socraticTutorLevel = nivel)
+        val pagActual = obtenerPaginaActual()
+        val fragActual = _uiState.value.fragmentosLectura.getOrNull(_uiState.value.indiceActual)?.texto?.take(180) ?: ""
+        val prompt = when (nivel) {
+            "Feynman" -> "Aplica la Técnica Feynman sobre lo que estoy leyendo en la página $pagActual. Explícalo con tus palabras como si fuera para un principiante total y dame una analogía cotidiana."
+            "Sencillo" -> "Explícame en lenguaje muy sencillo y directo la idea central de la página $pagActual (\"$fragActual\")."
+            "Universitario" -> "Realiza un análisis dogmático y profundo a nivel universitario de la disposición de la página $pagActual."
+            "Ejemplo" -> "Dame un caso o ejemplo práctico hipotético para aplicar lo establecido en la página $pagActual."
+            else -> "Explícame el concepto de la página $pagActual."
+        }
+        enviarPregunta(prompt)
+    }
+
+    private suspend fun actualizarEstadisticasEstudio() {
+        val stats = studyRepository.computeStats()
+        _uiState.value = _uiState.value.copy(studyStats = stats)
+    }
+
     override fun onCleared() {
         super.onCleared()
+        pomodoroJob?.cancel()
+        speechHelper?.stopListening()
         ttsManager?.shutdown()
     }
 }

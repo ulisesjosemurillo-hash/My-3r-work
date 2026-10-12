@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.*
+import com.example.ui.learning.*
 import com.example.ui.theme.*
 import com.example.viewmodel.JurisTechUiState
 import com.example.viewmodel.JurisTechViewModel
@@ -105,7 +106,15 @@ fun JurisTechScreen(
                     showQuestionsScreen = false
                 },
                 onAddFromFile = {
-                    filePickerLauncher.launch(arrayOf("application/pdf", "text/plain", "*/*"))
+                    filePickerLauncher.launch(
+                        arrayOf(
+                            "application/pdf",
+                            "text/plain",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "application/msword",
+                            "*/*"
+                        )
+                    )
                 }
             )
 
@@ -280,6 +289,25 @@ fun ReaderScreen(
                             )
                         }
 
+                        // Botón de Entrenador de Aprendizaje con IA
+                        IconButton(onClick = { viewModel.setShowStudyCoachDialog(true, 0) }) {
+                            BadgedBox(
+                                badge = {
+                                    if (uiState.dueCardsCount > 0) {
+                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                            Text("${uiState.dueCardsCount}")
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.School,
+                                    contentDescription = "Entrenador de Aprendizaje",
+                                    tint = if (uiState.learningMode == ReaderLearningMode.GUIDED_LEARNING) JtGreenPrimary else JtPrimaryText
+                                )
+                            }
+                        }
+
                         // Botón de 3 puntos con menú de opciones
                         Box {
                             IconButton(onClick = { showMenu = true }) {
@@ -291,6 +319,14 @@ fun ReaderScreen(
                                 onDismissRequest = { showMenu = false },
                                 modifier = Modifier.background(JtSurface)
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Entrenador de Aprendizaje (IA)", color = JtPrimaryText) },
+                                    leadingIcon = { Icon(Icons.Default.School, contentDescription = null, tint = JtGreenPrimary) },
+                                    onClick = {
+                                        showMenu = false
+                                        viewModel.setShowStudyCoachDialog(true, 0)
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Cambiar nombre del libro", color = JtPrimaryText) },
                                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = JtGreenPrimary) },
@@ -376,6 +412,112 @@ fun ReaderScreen(
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = JtBackground)
                 )
+
+                // Selector de Modos de Aprendizaje (Libre / Guiado / Repaso)
+                Surface(
+                    color = JtSurface,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ReaderLearningMode.values().forEach { m ->
+                            val isSel = uiState.learningMode == m
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSel) JtGreenPrimary else Color.Transparent,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { viewModel.setReaderLearningMode(m) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val icon = when (m) {
+                                        ReaderLearningMode.FREE_READING -> Icons.Default.Headphones
+                                        ReaderLearningMode.GUIDED_LEARNING -> Icons.Default.Psychology
+                                        ReaderLearningMode.SPACED_REVIEW -> Icons.Default.Repeat
+                                    }
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = m.label,
+                                        tint = if (isSel) Color.White else JtSecondaryText,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = when (m) {
+                                            ReaderLearningMode.FREE_READING -> "Libre"
+                                            ReaderLearningMode.GUIDED_LEARNING -> "Guiado"
+                                            ReaderLearningMode.SPACED_REVIEW -> "Repaso"
+                                        },
+                                        color = if (isSel) Color.White else JtSecondaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+
+                        // Acceso rápido al Entrenador
+                        IconButton(
+                            onClick = { viewModel.setShowStudyCoachDialog(true, 0) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.School,
+                                contentDescription = "Herramientas de Estudio",
+                                tint = JtGreenPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Banner de estado en Modo Guiado
+                if (uiState.learningMode == ReaderLearningMode.GUIDED_LEARNING) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Psychology,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Bloque: ${uiState.fragmentsInCurrentBlock}/${uiState.guidedBlockSize} leídos",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            TextButton(
+                                onClick = { viewModel.activarPreguntaGuiada() },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("Preguntarme ahora", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
 
                 // Barra de búsqueda dentro del documento
                 if (uiState.showInDocumentSearchBar) {
@@ -528,6 +670,24 @@ fun ReaderScreen(
                 )
             }
         }
+    }
+
+    // Diálogo interactivo de Aprendizaje Guiado (Evocación Activa)
+    if (uiState.showGuidedQuestionDialog) {
+        GuidedQuestionDialog(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { viewModel.cerrarDialogoPreguntaGuiada() }
+        )
+    }
+
+    // Diálogo del Entrenador de Aprendizaje (Modos, Repaso Espaciado, Cornell, Codificación Dual, Pomodoro)
+    if (uiState.showStudyCoachDialog) {
+        StudyCoachDialog(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { viewModel.setShowStudyCoachDialog(false) }
+        )
     }
 
     // Modal de Índice, Marcadores y Resaltados
@@ -1824,7 +1984,36 @@ fun QuestionsScreen(
                                 color = JtSecondaryText,
                                 fontSize = 13.sp
                             )
-                            Spacer(modifier = Modifier.height(18.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                SuggestionChip(
+                                    onClick = { viewModel.consultarTutorSocraticoNivel("Feynman") },
+                                    label = { Text("💡 Feynman", fontSize = 11.sp) }
+                                )
+                                SuggestionChip(
+                                    onClick = { viewModel.consultarTutorSocraticoNivel("Sencillo") },
+                                    label = { Text("📖 Explicación sencilla", fontSize = 11.sp) }
+                                )
+                                SuggestionChip(
+                                    onClick = { viewModel.consultarTutorSocraticoNivel("Universitario") },
+                                    label = { Text("🎓 Nivel universitario", fontSize = 11.sp) }
+                                )
+                                SuggestionChip(
+                                    onClick = { viewModel.consultarTutorSocraticoNivel("Ejemplo") },
+                                    label = { Text("⚖ Caso práctico", fontSize = 11.sp) }
+                                )
+                                SuggestionChip(
+                                    onClick = { viewModel.activarPreguntaGuiada() },
+                                    label = { Text("❓ Evalúame", fontSize = 11.sp) }
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             Box(
                                 modifier = Modifier
@@ -2006,6 +2195,32 @@ fun QuestionsScreen(
                                     onClick = { studySubTab = index },
                                     text = { Text(title, fontSize = 12.sp, fontWeight = if (studySubTab == index) FontWeight.Bold else FontWeight.Normal) }
                                 )
+                            }
+                        }
+
+                        // Botón destacado: Entrenador de Aprendizaje con IA
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .clickable { viewModel.setShowStudyCoachDialog(true, 0) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Default.School, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text("Entrenador Personal de Estudio (IA)", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text("Repaso Espaciado • Notas Cornell • Codificación Dual • Pomodoro", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                             }
                         }
 

@@ -65,6 +65,9 @@ interface RecentDocumentDao {
     @Query("UPDATE recent_documents SET questionsHistoryJson = :questionsHistoryJson WHERE id = :id")
     suspend fun updateQuestionsHistory(id: String, questionsHistoryJson: String)
 
+    @Query("UPDATE recent_documents SET positionHistoryJson = :positionHistoryJson WHERE id = :id")
+    suspend fun updatePositionHistory(id: String, positionHistoryJson: String)
+
     @Query("SELECT * FROM recent_documents")
     suspend fun getAllDocumentsList(): List<RecentDocumentEntity>
 

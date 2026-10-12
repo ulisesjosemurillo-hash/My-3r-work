@@ -11,7 +11,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-class RecentDocumentRepository(private val dao: RecentDocumentDao) {
+class RecentDocumentRepository(
+    private val dao: RecentDocumentDao,
+    val highlightDao: HighlightDao? = null
+) {
 
     val recentDocuments: Flow<List<RecentDocumentEntity>> = dao.getAllRecentDocuments()
 
@@ -30,7 +33,8 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
         opinionsJson: String = "[]",
         bookmarksJson: String = "[]",
         audioCommentsJson: String = "[]",
-        questionsHistoryJson: String = "[]"
+        questionsHistoryJson: String = "[]",
+        positionHistoryJson: String = "[]"
     ) = withContext(Dispatchers.IO) {
         val pagesJson = serializePages(pages)
         val entity = RecentDocumentEntity(
@@ -50,7 +54,8 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
             opinionsJson = opinionsJson,
             bookmarksJson = bookmarksJson,
             audioCommentsJson = audioCommentsJson,
-            questionsHistoryJson = questionsHistoryJson
+            questionsHistoryJson = questionsHistoryJson,
+            positionHistoryJson = positionHistoryJson
         )
         dao.insertOrUpdate(entity)
     }
@@ -95,6 +100,35 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
         dao.updateHighlights(id, json)
     }
 
+    suspend fun updateHighlightItems(id: String, items: List<com.example.model.HighlightItem>) = withContext(Dispatchers.IO) {
+        val json = serializeHighlightItems(items)
+        dao.updateHighlights(id, json)
+    }
+
+    fun getHighlightsFlow(documentId: String): Flow<List<Highlight>>? {
+        return highlightDao?.getHighlightsByDocument(documentId)
+    }
+
+    suspend fun saveHighlight(highlight: Highlight) = withContext(Dispatchers.IO) {
+        highlightDao?.insertHighlight(highlight)
+    }
+
+    suspend fun saveHighlights(highlights: List<Highlight>) = withContext(Dispatchers.IO) {
+        highlightDao?.insertHighlights(highlights)
+    }
+
+    suspend fun removeHighlightById(id: String) = withContext(Dispatchers.IO) {
+        highlightDao?.deleteHighlightById(id)
+    }
+
+    suspend fun removeHighlightsByFragment(documentId: String, fragmentId: Int) = withContext(Dispatchers.IO) {
+        highlightDao?.deleteHighlightsByFragment(documentId, fragmentId)
+    }
+
+    suspend fun getHighlightsByDocument(documentId: String): List<Highlight> = withContext(Dispatchers.IO) {
+        highlightDao?.getHighlightsByDocumentSync(documentId) ?: emptyList()
+    }
+
     suspend fun updateOpinions(id: String, opinions: List<FragmentOpinion>) = withContext(Dispatchers.IO) {
         val json = serializeOpinions(opinions)
         dao.updateOpinions(id, json)
@@ -113,6 +147,11 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
     suspend fun updateQuestionsHistory(id: String, questions: List<com.example.model.ChatMessage>) = withContext(Dispatchers.IO) {
         val json = serializeQuestions(questions)
         dao.updateQuestionsHistory(id, json)
+    }
+
+    suspend fun updatePositionHistory(id: String, history: List<com.example.model.PositionHistoryItem>) = withContext(Dispatchers.IO) {
+        val json = serializePositionHistory(history)
+        dao.updatePositionHistory(id, json)
     }
 
     suspend fun getDocumentById(id: String): RecentDocumentEntity? = withContext(Dispatchers.IO) {
@@ -220,10 +259,71 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
         try {
             val arr = JSONArray(json)
             for (i in 0 until arr.length()) {
-                set.add(arr.getInt(i))
+                val item = arr.get(i)
+                if (item is Int) {
+                    set.add(item)
+                } else if (item is JSONObject) {
+                    set.add(item.optInt("fragmentId", 0))
+                }
             }
         } catch (_: Exception) {}
         return set
+    }
+
+    fun serializeHighlightItems(items: List<com.example.model.HighlightItem>): String {
+        val arr = JSONArray()
+        items.forEach { item ->
+            arr.put(JSONObject().apply {
+                put("id", item.id)
+                put("documentId", item.documentId)
+                put("pageNumber", item.pageNumber)
+                put("fragmentId", item.fragmentId)
+                put("text", item.text)
+                put("startOffset", item.startOffset)
+                put("endOffset", item.endOffset)
+                put("colorHex", item.colorHex)
+                put("isUnderline", item.isUnderline)
+                put("timestamp", item.timestamp)
+            })
+        }
+        return arr.toString()
+    }
+
+    fun parseHighlightItems(json: String?): List<com.example.model.HighlightItem> {
+        if (json.isNullOrBlank()) return emptyList()
+        val list = mutableListOf<com.example.model.HighlightItem>()
+        try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val item = arr.get(i)
+                if (item is JSONObject) {
+                    list.add(
+                        com.example.model.HighlightItem(
+                            id = item.optString("id", java.util.UUID.randomUUID().toString()),
+                            documentId = item.optString("documentId", ""),
+                            pageNumber = item.optInt("pageNumber", 1),
+                            fragmentId = item.optInt("fragmentId", 0),
+                            text = item.optString("text", ""),
+                            startOffset = item.optInt("startOffset", 0),
+                            endOffset = item.optInt("endOffset", 0),
+                            colorHex = item.optString("colorHex", "#FFF59D"),
+                            isUnderline = item.optBoolean("isUnderline", false),
+                            timestamp = item.optLong("timestamp", System.currentTimeMillis())
+                        )
+                    )
+                } else if (item is Int) {
+                    list.add(
+                        com.example.model.HighlightItem(
+                            id = java.util.UUID.randomUUID().toString(),
+                            fragmentId = item,
+                            colorHex = "#FFF59D",
+                            isUnderline = false
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
     }
 
     fun serializeOpinions(opinions: List<FragmentOpinion>): String {
@@ -238,6 +338,9 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
                 put("opinion", op.opinion)
                 put("tag", op.tag)
                 put("timestamp", op.timestamp)
+                put("selectedText", op.selectedText)
+                put("startOffset", op.startOffset)
+                put("endOffset", op.endOffset)
             })
         }
         return arr.toString()
@@ -250,16 +353,20 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
             val arr = JSONArray(json)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val textoFrag = obj.optString("textoFragmento", "")
                 list.add(
                     FragmentOpinion(
                         id = obj.optString("id", i.toString()),
                         documentId = obj.optString("documentId", ""),
                         fragmentId = obj.optInt("fragmentId", 0),
                         pagina = obj.optInt("pagina", 1),
-                        textoFragmento = obj.optString("textoFragmento", ""),
+                        textoFragmento = textoFrag,
                         opinion = obj.optString("opinion", ""),
                         tag = obj.optString("tag", ""),
-                        timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        selectedText = obj.optString("selectedText", textoFrag),
+                        startOffset = obj.optInt("startOffset", 0),
+                        endOffset = obj.optInt("endOffset", 0)
                     )
                 )
             }
@@ -316,6 +423,9 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
                 put("audioPath", ac.audioPath)
                 put("durationSeconds", ac.durationSeconds)
                 put("timestamp", ac.timestamp)
+                put("selectedText", ac.selectedText)
+                put("startOffset", ac.startOffset)
+                put("endOffset", ac.endOffset)
             })
         }
         return arr.toString()
@@ -328,15 +438,52 @@ class RecentDocumentRepository(private val dao: RecentDocumentDao) {
             val arr = JSONArray(json)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val snip = obj.optString("snippet", "")
                 list.add(
                     com.example.model.AudioComment(
                         id = obj.optString("id", i.toString()),
                         documentId = obj.optString("documentId", ""),
                         fragmentId = obj.optInt("fragmentId", 0),
                         pagina = obj.optInt("pagina", 1),
-                        snippet = obj.optString("snippet", ""),
+                        snippet = snip,
                         audioPath = obj.optString("audioPath", ""),
                         durationSeconds = obj.optInt("durationSeconds", 0),
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        selectedText = obj.optString("selectedText", snip),
+                        startOffset = obj.optInt("startOffset", 0),
+                        endOffset = obj.optInt("endOffset", 0)
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun serializePositionHistory(history: List<com.example.model.PositionHistoryItem>): String {
+        val arr = JSONArray()
+        history.takeLast(50).forEach { item ->
+            arr.put(JSONObject().apply {
+                put("fragmentIndex", item.fragmentIndex)
+                put("pageNumber", item.pageNumber)
+                put("snippet", item.snippet)
+                put("timestamp", item.timestamp)
+            })
+        }
+        return arr.toString()
+    }
+
+    fun parsePositionHistory(json: String?): List<com.example.model.PositionHistoryItem> {
+        if (json.isNullOrBlank()) return emptyList()
+        val list = mutableListOf<com.example.model.PositionHistoryItem>()
+        try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    com.example.model.PositionHistoryItem(
+                        fragmentIndex = obj.optInt("fragmentIndex", 0),
+                        pageNumber = obj.optInt("pageNumber", 1),
+                        snippet = obj.optString("snippet", ""),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
                     )
                 )

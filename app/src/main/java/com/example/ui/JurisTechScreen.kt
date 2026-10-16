@@ -37,9 +37,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -94,6 +96,12 @@ fun JurisTechScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
             val fileName = getFileNameFromUri(context, uri) ?: uri.lastPathSegment ?: "Documento.pdf"
             viewModel.procesarArchivoPdf(uri, fileName)
         }
@@ -157,21 +165,28 @@ fun JurisTechScreen(
         }
     } else {
         BackHandler {
-            if (showQuestionsScreen) {
-                showQuestionsScreen = false
-            } else {
-                viewModel.cerrarDocumento()
+            when {
+                uiState.showMultimodalLessonScreen -> viewModel.cerrarTutorMultimodal()
+                showQuestionsScreen -> showQuestionsScreen = false
+                else -> viewModel.cerrarDocumento()
             }
         }
 
-        AnimatedContent(targetState = showQuestionsScreen, label = "ScreenTransition") { showQ ->
-            if (showQ) {
+        when {
+            uiState.showMultimodalLessonScreen -> {
+                com.example.ui.learning.MultimodalTutorLessonScreen(
+                    uiState = uiState,
+                    viewModel = viewModel
+                )
+            }
+            showQuestionsScreen -> {
                 QuestionsScreen(
                     uiState = uiState,
                     viewModel = viewModel,
                     onBack = { showQuestionsScreen = false }
                 )
-            } else {
+            }
+            else -> {
                 ReaderScreen(
                     uiState = uiState,
                     viewModel = viewModel,
@@ -312,6 +327,18 @@ fun ReaderScreen(
                             }
                         }
 
+                        // Botón de Tutor Personal Multimodal
+                        IconButton(
+                            onClick = { viewModel.abrirTutorMultimodal() },
+                            modifier = Modifier.testTag("tutor_multimodal_top_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Tutor Personal Multimodal",
+                                tint = JtGold
+                            )
+                        }
+
                         // Botón de 3 puntos con menú de opciones
                         Box {
                             IconButton(onClick = { showMenu = true }) {
@@ -323,6 +350,14 @@ fun ReaderScreen(
                                 onDismissRequest = { showMenu = false },
                                 modifier = Modifier.background(JtSurface)
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Tutor Multimodal: Crear Lección", color = JtPrimaryText, fontWeight = FontWeight.Bold) },
+                                    leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = JtGold) },
+                                    onClick = {
+                                        showMenu = false
+                                        viewModel.abrirTutorMultimodal()
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Entrenador de Aprendizaje (IA)", color = JtPrimaryText) },
                                     leadingIcon = { Icon(Icons.Default.School, contentDescription = null, tint = JtGreenPrimary) },
@@ -467,6 +502,35 @@ fun ReaderScreen(
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
+                            }
+                        }
+
+                        // Acceso directo a Tutor Multimodal
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = JtGold.copy(alpha = 0.16f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, JtGold),
+                            modifier = Modifier
+                                .clickable { viewModel.abrirTutorMultimodal() }
+                                .testTag("tutor_multimodal_mode_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = JtGold,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Tutor",
+                                    color = JtGold,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
 
@@ -2047,6 +2111,18 @@ fun QuestionsScreen(
 
     var textInput by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+    val micLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            viewModel.toggleChatVoiceListening { dictatedText ->
+                textInput = if (textInput.isBlank()) dictatedText else "$textInput $dictatedText"
+            }
+        } else {
+            Toast.makeText(context, "Se requiere permiso de micrófono para dictado de voz", Toast.LENGTH_SHORT).show()
+        }
+    }
     val listState = rememberLazyListState()
 
     var comparisonTopic by remember { mutableStateOf("Garantías y debido proceso") }
@@ -2155,12 +2231,99 @@ fun QuestionsScreen(
                                     label = { Text("❓ Evalúame", fontSize = 11.sp) }
                                 )
                             }
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Fila de controles de voz: Lectura automática y estado de STT
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(JtSurface, RoundedCornerShape(8.dp))
+                                    .border(1.dp, JtBorder, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.VolumeUp,
+                                        contentDescription = null,
+                                        tint = if (uiState.autoReadChatResponses) JtGreenPrimary else JtSecondaryText,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Lectura automática (TTS)",
+                                        color = JtPrimaryText,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Switch(
+                                    checked = uiState.autoReadChatResponses,
+                                    onCheckedChange = { viewModel.toggleAutoReadChatResponses() },
+                                    modifier = Modifier.scale(0.8f)
+                                )
+                            }
+
+                            // Estado en tiempo real del proceso y proveedor
+                            Surface(
+                                color = when (uiState.chatProcessState) {
+                                    ChatProcessState.LISTENING -> Color(0xFFFFEBEE)
+                                    ChatProcessState.TRANSCRIBING -> Color(0xFFFFF8E1)
+                                    ChatProcessState.SEARCHING, ChatProcessState.GENERATING, ChatProcessState.PREPARING_AUDIO -> Color(0xFFE8F5E9)
+                                    ChatProcessState.PLAYING_AUDIO -> Color(0xFFE3F2FD)
+                                    else -> JtSurface
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    when (uiState.chatProcessState) {
+                                        ChatProcessState.LISTENING -> Color(0xFFE57373)
+                                        ChatProcessState.TRANSCRIBING -> Color(0xFFFFB74D)
+                                        ChatProcessState.SEARCHING, ChatProcessState.GENERATING, ChatProcessState.PREPARING_AUDIO -> JtGreenPrimary
+                                        ChatProcessState.PLAYING_AUDIO -> Color(0xFF64B5F6)
+                                        else -> JtBorder
+                                    }
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = uiState.chatProcessState.icon,
+                                            fontSize = 14.sp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (uiState.isChatVoiceListening) uiState.chatVoiceStatus else uiState.chatProcessState.label,
+                                            color = when (uiState.chatProcessState) {
+                                                ChatProcessState.LISTENING -> Color(0xFFC62828)
+                                                ChatProcessState.TRANSCRIBING -> Color(0xFFE65100)
+                                                ChatProcessState.SEARCHING, ChatProcessState.GENERATING, ChatProcessState.PREPARING_AUDIO -> JtGreenPrimary
+                                                else -> JtPrimaryText
+                                            },
+                                            fontSize = 12.sp,
+                                            fontWeight = if (uiState.chatProcessState != ChatProcessState.READY) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                    Text(
+                                        text = if (uiState.apiKeyConfigured) "Gemini + RAG" else "RAG Local (Offline)",
+                                        color = JtSecondaryText,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(140.dp)
+                                    .height(145.dp)
                                     .background(JtSurface, RoundedCornerShape(12.dp))
                                     .border(1.dp, JtBorder, RoundedCornerShape(12.dp))
                                     .padding(14.dp)
@@ -2168,7 +2331,7 @@ fun QuestionsScreen(
                                 OutlinedTextField(
                                     value = textInput,
                                     onValueChange = { textInput = it },
-                                    placeholder = { Text("¿Cuáles son los principios fundamentales o penas aplicables?", color = JtSecondaryText, fontSize = 13.sp) },
+                                    placeholder = { Text("Escribe o dicta por voz tu consulta jurídica sobre el documento...", color = JtSecondaryText, fontSize = 13.sp) },
                                     modifier = Modifier.fillMaxSize(),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = Color.Transparent,
@@ -2188,98 +2351,277 @@ fun QuestionsScreen(
                                     })
                                 )
 
-                                Box(
+                                Row(
                                     modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .size(38.dp)
-                                        .background(if (textInput.isNotBlank()) JtGreenPrimary else JtSecondaryText.copy(alpha = 0.5f), CircleShape)
-                                        .clickable(enabled = textInput.isNotBlank()) {
-                                            viewModel.enviarPregunta(textInput)
-                                            textInput = ""
-                                            keyboardController?.hide()
-                                        },
-                                    contentAlignment = Alignment.Center
+                                        .align(Alignment.BottomEnd),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Enviar",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                                    // Botón de Micrófono (STT) para dictado por voz
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .background(
+                                                if (uiState.isChatVoiceListening) Color(0xFFD32F2F) else JtGreenPrimary.copy(alpha = 0.2f),
+                                                CircleShape
+                                            )
+                                            .clickable {
+                                                if (uiState.isChatVoiceListening) {
+                                                    viewModel.toggleChatVoiceListening {}
+                                                } else {
+                                                    micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (uiState.isChatVoiceListening) Icons.Default.Stop else Icons.Default.Mic,
+                                            contentDescription = if (uiState.isChatVoiceListening) "Detener grabación" else "Dictar por voz",
+                                            tint = if (uiState.isChatVoiceListening) Color.White else JtGreenPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    // Botón de Enviar consulta
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .background(if (textInput.isNotBlank()) JtGreenPrimary else JtSecondaryText.copy(alpha = 0.5f), CircleShape)
+                                            .clickable(enabled = textInput.isNotBlank()) {
+                                                viewModel.enviarPregunta(textInput)
+                                                textInput = ""
+                                                keyboardController?.hide()
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = "Enviar",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
+                        }
+
+                        // Historial de conversación (Preguntas y Respuestas)
+                        val visibleMessages = uiState.chatMessages.filter { !it.texto.contains("cargado y guardado") }
+                        if (visibleMessages.isNotEmpty()) {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "Historial de conversación",
+                                        color = JtPrimaryText,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    TextButton(onClick = { viewModel.limpiarChat() }) {
+                                        Text("Limpiar", color = JtSecondaryText, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+
+                            visibleMessages.forEachIndexed { index, msg ->
+                                item(key = msg.id) {
+                                    if (msg.isUser) {
+                                        // Burbuja del Usuario
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.88f)
+                                                    .background(JtGreenPrimary.copy(alpha = 0.12f), RoundedCornerShape(14.dp, 14.dp, 2.dp, 14.dp))
+                                                    .border(1.dp, JtGreenPrimary.copy(alpha = 0.3f), RoundedCornerShape(14.dp, 14.dp, 2.dp, 14.dp))
+                                                    .padding(12.dp)
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.Person, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(14.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("Tú", color = JtGreenPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = msg.texto,
+                                                    color = JtPrimaryText,
+                                                    fontSize = 14.sp,
+                                                    lineHeight = 20.sp
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        // Tarjeta de Respuesta del Asistente
+                                        val isPlayingThis = uiState.playingChatMessageIndex == index && uiState.isReadingChatResponse
+                                        val isPausedThis = uiState.playingChatMessageIndex == index && uiState.isReadingChatPaused
+
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = JtSurface),
+                                            shape = RoundedCornerShape(12.dp),
+                                            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(JtBorder)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(Icons.Default.Balance, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(18.dp))
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = "JurisReader AI • Respuesta",
+                                                            color = JtPrimaryText,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 14.sp
+                                                        )
+                                                    }
+
+                                                    // Controles de audio: Play / Pause / Resume / Stop
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        if (isPlayingThis) {
+                                                            IconButton(onClick = { viewModel.pausarLecturaChat() }) {
+                                                                Icon(Icons.Default.Pause, contentDescription = "Pausar", tint = JtGreenPrimary, modifier = Modifier.size(20.dp))
+                                                            }
+                                                            IconButton(onClick = { viewModel.detenerLecturaChat() }) {
+                                                                Icon(Icons.Default.Stop, contentDescription = "Detener", tint = Color(0xFFD32F2F), modifier = Modifier.size(20.dp))
+                                                            }
+                                                        } else if (isPausedThis) {
+                                                            IconButton(onClick = { viewModel.reanudarLecturaChat(msg.texto) }) {
+                                                                Icon(Icons.Default.PlayArrow, contentDescription = "Reanudar", tint = JtGreenPrimary, modifier = Modifier.size(20.dp))
+                                                            }
+                                                            IconButton(onClick = { viewModel.detenerLecturaChat() }) {
+                                                                Icon(Icons.Default.Stop, contentDescription = "Detener", tint = Color(0xFFD32F2F), modifier = Modifier.size(20.dp))
+                                                            }
+                                                        } else {
+                                                            IconButton(onClick = { viewModel.leerRespuestaChat(index, msg.texto) }) {
+                                                                Icon(Icons.Default.VolumeUp, contentDescription = "Leer en voz alta", tint = JtGreenPrimary, modifier = Modifier.size(20.dp))
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // Barra de control de velocidad y estado si está activa la lectura
+                                                if (isPlayingThis || isPausedThis) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(vertical = 6.dp)
+                                                            .background(JtGreenPrimary.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = if (isPlayingThis) "▶ Leyendo en voz alta..." else "⏸ En pausa",
+                                                            color = JtGreenPrimary,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                            listOf(0.75f, 1.0f, 1.25f, 1.5f).forEach { rate ->
+                                                                Text(
+                                                                    text = "${rate}x",
+                                                                    fontSize = 11.sp,
+                                                                    fontWeight = if (uiState.chatSpeechRate == rate) FontWeight.Bold else FontWeight.Normal,
+                                                                    color = if (uiState.chatSpeechRate == rate) JtGreenPrimary else JtSecondaryText,
+                                                                    modifier = Modifier
+                                                                        .clickable { viewModel.cambiarVelocidadChat(rate) }
+                                                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                Text(
+                                                    text = msg.texto,
+                                                    color = JtPrimaryText,
+                                                    fontSize = 14.sp,
+                                                    lineHeight = 22.sp,
+                                                    fontFamily = FontFamily.Serif
+                                                )
+
+                                                if (msg.referencedPages.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.height(12.dp))
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text("Páginas citadas:", color = JtSecondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                        msg.referencedPages.forEach { p ->
+                                                            SuggestionChip(
+                                                                onClick = {
+                                                                    viewModel.saltarAPagina(p)
+                                                                    onBack()
+                                                                },
+                                                                label = { Text("Pág. $p", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                                                            )
+                                                        }
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(14.dp))
+                                                val pageRefText = if (msg.referencedPages.isNotEmpty()) " (Pág. ${msg.referencedPages.first()})" else ""
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        if (msg.referencedFragmentIndex >= 0) {
+                                                            viewModel.saltarAFragmento(msg.referencedFragmentIndex)
+                                                        } else if (msg.referencedPages.isNotEmpty()) {
+                                                            viewModel.saltarAPagina(msg.referencedPages.first())
+                                                        }
+                                                        onBack()
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = JtPrimaryText),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Text("Ir exactamente al fragmento en el lector$pageRefText")
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         if (uiState.isAskingAi) {
                             item {
                                 Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = JtGreenPrimary)
-                                }
-                            }
-                        } else if (lastAiMessage != null) {
-                            item {
-                                Text(
-                                    "Respuesta y Cita Textual",
-                                    color = JtPrimaryText,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(bottom = 12.dp)
-                                )
-
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = JtSurface),
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(JtBorder)),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Article, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = "Fundamento legal encontrado",
-                                                color = JtPrimaryText,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(12.dp))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(color = JtGreenPrimary)
+                                        Spacer(modifier = Modifier.height(8.dp))
                                         Text(
-                                            text = lastAiMessage.texto,
+                                            text = uiState.chatProcessState.label,
                                             color = JtSecondaryText,
-                                            fontSize = 14.sp,
-                                            lineHeight = 22.sp,
-                                            fontFamily = FontFamily.Serif
+                                            fontSize = 12.sp
                                         )
-                                        Spacer(modifier = Modifier.height(18.dp))
-                                        val pageRefText = if (lastAiMessage.referencedPages.isNotEmpty()) " (Pág. ${lastAiMessage.referencedPages.first()})" else ""
-                                        OutlinedButton(
-                                            onClick = {
-                                                if (lastAiMessage.referencedFragmentIndex >= 0) {
-                                                    viewModel.saltarAFragmento(lastAiMessage.referencedFragmentIndex)
-                                                } else if (lastAiMessage.referencedPages.isNotEmpty()) {
-                                                    viewModel.saltarAPagina(lastAiMessage.referencedPages.first())
-                                                }
-                                                onBack()
-                                            },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = JtPrimaryText),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Text("Ir exactamente al fragmento$pageRefText")
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(24.dp))
                             }
                         }
 
                         item {
+                            Spacer(modifier = Modifier.height(16.dp))
                             Text(
                                 "Preguntas jurídicas frecuentes",
                                 color = JtPrimaryText,
@@ -2291,6 +2633,7 @@ fun QuestionsScreen(
                             val suggestions = listOf(
                                 "¿Cuáles son los principios rectores consagrados en el Título Preliminar?",
                                 "¿Qué se establece sobre el Principio de Legalidad y Lesividad?",
+                                "Tengo un caso con tres hijos menores. Según este libro, ¿qué debo revisar?",
                                 "¿Cuáles son las sanciones y tipos de penas aplicables?",
                                 "¿Existe aplicación retroactiva de la ley más favorable?"
                             )
@@ -2363,6 +2706,34 @@ fun QuestionsScreen(
                                     }
                                 }
                                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+
+                        // Banner Tutor Personal Multimodal
+                        Surface(
+                            color = JtGold.copy(alpha = 0.14f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, JtGold),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .clickable { viewModel.abrirTutorMultimodal() }
+                                .testTag("tutor_multimodal_study_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = JtGold)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text("Tutor Personal Multimodal: Iniciar Lección", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = JtGold)
+                                        Text("Micro-lecciones interactivas • Ilustraciones conceptuales • Ejercicios • Voz sincronizada", fontSize = 11.sp, color = JtSecondaryText)
+                                    }
+                                }
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = JtGold, modifier = Modifier.size(16.dp))
                             }
                         }
 

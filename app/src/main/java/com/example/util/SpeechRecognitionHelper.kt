@@ -27,9 +27,15 @@ class SpeechRecognitionHelper(
         return SpeechRecognizer.isRecognitionAvailable(context)
     }
 
-    fun startListening() {
+    fun startListening(
+        customOnResultText: ((String) -> Unit)? = null,
+        customOnStateChanged: ((Boolean, String) -> Unit)? = null
+    ) {
+        val activeResultCallback = customOnResultText ?: onResultText
+        val activeStateCallback = customOnStateChanged ?: onListeningStateChanged
+
         if (!isAvailable()) {
-            onListeningStateChanged(false, "Reconocimiento de voz no disponible en este dispositivo.")
+            activeStateCallback(false, "Reconocimiento de voz no disponible en este dispositivo.")
             return
         }
 
@@ -40,11 +46,11 @@ class SpeechRecognitionHelper(
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         isListening = true
-                        onListeningStateChanged(true, "🎙 Escuchando... Habla ahora")
+                        activeStateCallback(true, "🎙 Escuchando... Habla ahora")
                     }
 
                     override fun onBeginningOfSpeech() {
-                        onListeningStateChanged(true, "🎙 Detectando voz...")
+                        activeStateCallback(true, "🎙 Detectando voz...")
                     }
 
                     override fun onRmsChanged(rmsdB: Float) {}
@@ -52,7 +58,7 @@ class SpeechRecognitionHelper(
                     override fun onBufferReceived(buffer: ByteArray?) {}
 
                     override fun onEndOfSpeech() {
-                        onListeningStateChanged(false, "Procesando respuesta...")
+                        activeStateCallback(false, "Transcribiendo respuesta...")
                     }
 
                     override fun onError(error: Int) {
@@ -64,16 +70,16 @@ class SpeechRecognitionHelper(
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Falta permiso de micrófono."
                             else -> "Reconocimiento pausado."
                         }
-                        onListeningStateChanged(false, errorMsg)
+                        activeStateCallback(false, errorMsg)
                     }
 
                     override fun onResults(results: Bundle?) {
                         isListening = false
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: ""
-                        onListeningStateChanged(false, if (text.isNotBlank()) "Voz reconocida." else "Listo.")
+                        activeStateCallback(false, if (text.isNotBlank()) "Voz reconocida." else "Listo.")
                         if (text.isNotBlank()) {
-                            onResultText(text)
+                            activeResultCallback(text)
                         }
                     }
 
@@ -81,7 +87,7 @@ class SpeechRecognitionHelper(
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull() ?: ""
                         if (text.isNotBlank()) {
-                            onListeningStateChanged(true, "🎙 Escuchando: \"$text\"")
+                            activeStateCallback(true, "🎙 Escuchando: \"$text\"")
                         }
                     }
 

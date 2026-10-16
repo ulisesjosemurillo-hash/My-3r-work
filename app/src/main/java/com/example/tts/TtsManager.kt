@@ -12,11 +12,12 @@ import android.util.Log
 /**
  * Gestor y Coordinador Central de Síntesis de Voz (TTS) para JurisReader.
  * Orquesta dos proveedores especializados:
- *  1. [OnlineNaturalTtsProvider] (Voz natural en streaming / red)
- *  2. [LocalDeviceTtsProvider] (Voz nativa local 100% offline)
+ *  1. [OnlineNaturalTtsProvider] (Voces IA de Hombre y Mujer en streaming con entonación de persona real)
+ *  2. [LocalDeviceTtsProvider] (Voces de Hombre y Mujer nativas 100% offline sin internet)
  *
- * Implementa Modo Automático con conmutación inteligente y sin pérdida de fragmento,
- * además de selección manual estricta (Online o Local Offline).
+ * Ofrece estrictamente las DOS opciones requeridas:
+ *  - [VoiceGender.HOMBRE]: Voz de Hombre
+ *  - [VoiceGender.MUJER]: Voz de Mujer
  */
 class TtsManager(
     private val context: Context,
@@ -33,6 +34,9 @@ class TtsManager(
     private val onlineProvider = OnlineNaturalTtsProvider(context)
 
     var currentMode: TtsMode = TtsMode.AUTO
+        private set
+
+    var currentVoiceGender: VoiceGender = VoiceGender.MUJER
         private set
 
     var activeEngineType: ActiveEngineType = ActiveEngineType.LOCAL
@@ -59,7 +63,7 @@ class TtsManager(
                 Log.d(tag, "Conexión a internet restablecida.")
                 if (!wasConnected && currentMode == TtsMode.AUTO && onlineProvider.isAvailable) {
                     activeEngineType = ActiveEngineType.ONLINE
-                    onEngineSwitched(activeEngineType, "Conexión activa: voz natural online habilitada")
+                    onEngineSwitched(activeEngineType, "Conexión activa: voz IA natural online de persona habilitada")
                 }
             }
         }
@@ -70,7 +74,7 @@ class TtsManager(
                 Log.d(tag, "Conexión a internet perdida.")
                 if (currentMode == TtsMode.AUTO) {
                     activeEngineType = ActiveEngineType.LOCAL
-                    onEngineSwitched(activeEngineType, "Sin conexión: cambiado a voz local offline")
+                    onEngineSwitched(activeEngineType, "Sin conexión: cambiado fluidamente a voz local offline")
                 }
             }
         }
@@ -80,12 +84,14 @@ class TtsManager(
         checkInitialNetwork()
         registerNetworkCallback()
 
-        // Inicializar ambos motores en paralelo
+        // Inicializar ambos motores en paralelo y configurar género inicial
         localProvider.initialize { localSuccess ->
             Log.d(tag, "Local TTS listo: $localSuccess")
+            localProvider.setVoiceGender(currentVoiceGender)
         }
         onlineProvider.initialize { onlineSuccess ->
             Log.d(tag, "Online TTS listo: $onlineSuccess")
+            onlineProvider.setVoiceGender(currentVoiceGender)
             updateActiveEngineAccordingToMode()
         }
     }
@@ -117,7 +123,24 @@ class TtsManager(
         currentMode = mode
         updateActiveEngineAccordingToMode()
 
-        // Si se estaba reproduciendo y se cambia de modo, reiniciar el fragmento con el nuevo motor
+        if (continuePlayingCurrentFragment && lastSpokenFragmentId >= 0 && lastSpokenText.isNotBlank()) {
+            val fragId = lastSpokenFragmentId
+            val text = lastSpokenText
+            stop()
+            speakFragment(fragId, text)
+        }
+    }
+
+    /**
+     * Configura el género de voz activo: Voz de Hombre o Voz de Mujer.
+     * Si hay internet, utiliza la voz de Inteligencia Artificial respectiva con entonación humana;
+     * si no hay internet, usa la voz offline del dispositivo.
+     */
+    fun setVoiceGender(gender: VoiceGender, continuePlayingCurrentFragment: Boolean = true) {
+        currentVoiceGender = gender
+        onlineProvider.setVoiceGender(gender)
+        localProvider.setVoiceGender(gender)
+
         if (continuePlayingCurrentFragment && lastSpokenFragmentId >= 0 && lastSpokenText.isNotBlank()) {
             val fragId = lastSpokenFragmentId
             val text = lastSpokenText
@@ -139,11 +162,15 @@ class TtsManager(
             TtsMode.LOCAL_OFFLINE -> ActiveEngineType.LOCAL
         }
         val reason = when (currentMode) {
-            TtsMode.AUTO -> if (activeEngineType == ActiveEngineType.ONLINE) "Modo automático con red (Online)" else "Modo automático sin red (Local)"
-            TtsMode.ONLINE_NATURAL -> "Modo forzado Voz Natural Online"
-            TtsMode.LOCAL_OFFLINE -> "Modo forzado Voz Local Offline"
+            TtsMode.AUTO -> if (activeEngineType == ActiveEngineType.ONLINE) "Voz IA Natural Online (${currentVoiceGender.displayName})" else "Voz Local Offline (${currentVoiceGender.displayName})"
+            TtsMode.ONLINE_NATURAL -> "Voz IA Natural Online forzada"
+            TtsMode.LOCAL_OFFLINE -> "Voz Local Offline forzada"
         }
         onEngineSwitched(activeEngineType, reason)
+    }
+
+    fun speak(text: String) {
+        speakFragment(-999, text)
     }
 
     fun speakFragment(fragmentId: Int, text: String) {
@@ -212,24 +239,76 @@ class TtsManager(
         localProvider.setPitch(pitch)
     }
 
+    /**
+     * Devuelve únicamente las dos opciones permitidas: Voz de Hombre y Voz de Mujer.
+     */
     fun getAvailableVoices(): List<String> {
-        val list = when (activeEngineType) {
-            ActiveEngineType.ONLINE -> onlineProvider.getAvailableVoices()
-            ActiveEngineType.LOCAL -> localProvider.getAvailableVoices()
-        }
-        return list.map { it.name }
+        return listOf(VoiceGender.HOMBRE.displayName, VoiceGender.MUJER.displayName)
     }
 
     fun getVoiceProfiles(): List<VoiceProfile> {
-        return when (activeEngineType) {
-            ActiveEngineType.ONLINE -> onlineProvider.getAvailableVoices()
-            ActiveEngineType.LOCAL -> localProvider.getAvailableVoices()
-        }
+        val isOnline = activeEngineType == ActiveEngineType.ONLINE && isNetworkConnected
+        return listOf(
+            VoiceProfile(
+                id = VoiceGender.HOMBRE.id,
+                name = VoiceGender.HOMBRE.displayName,
+                locale = "es-ES",
+                isNetworkRequired = isOnline,
+                isNatural = isOnline,
+                quality = if (isOnline) "IA Neural Natural" else "Local Offline",
+                gender = VoiceGender.HOMBRE
+            ),
+            VoiceProfile(
+                id = VoiceGender.MUJER.id,
+                name = VoiceGender.MUJER.displayName,
+                locale = "es-ES",
+                isNetworkRequired = isOnline,
+                isNatural = isOnline,
+                quality = if (isOnline) "IA Neural Natural" else "Local Offline",
+                gender = VoiceGender.MUJER
+            )
+        )
     }
 
     fun setVoiceByName(voiceName: String) {
-        onlineProvider.setVoice(voiceName)
-        localProvider.setVoice(voiceName)
+        val gender = if (voiceName.contains("Hombre", ignoreCase = true) || voiceName.equals(VoiceGender.HOMBRE.id, ignoreCase = true)) {
+            VoiceGender.HOMBRE
+        } else {
+            VoiceGender.MUJER
+        }
+        setVoiceGender(gender)
+    }
+
+    /**
+     * Muestra de audio interactiva para que el usuario pueda escuchar inmediatamente
+     * la voz de Hombre o la voz de Mujer antes de continuar con la lectura.
+     */
+    fun previewVoice(gender: VoiceGender, onDone: () -> Unit = {}) {
+        stop()
+        setVoiceGender(gender, continuePlayingCurrentFragment = false)
+        val provider = getProviderForCurrentState()
+        val isNet = isNetworkConnected && provider.isOnline
+
+        val sampleText = when (gender) {
+            VoiceGender.HOMBRE -> if (isNet) {
+                "Hola. Soy tu tutor con voz de hombre e inteligencia artificial. Mi entonación está calibrada para una lectura clara, profesional y humana."
+            } else {
+                "Hola. Soy tu voz masculina en modo local sin internet. Listo para continuar la lectura."
+            }
+            VoiceGender.MUJER -> if (isNet) {
+                "Hola. Soy tu tutora con voz de mujer e inteligencia artificial. Mi entonación está diseñada para acompañarte con calidez, claridad y fluidez natural."
+            } else {
+                "Hola. Soy tu voz femenina en modo local sin internet. Lista para acompañarte en tu estudio."
+            }
+        }
+
+        provider.speakFragment(
+            fragmentId = -888,
+            text = sampleText,
+            onStart = {},
+            onDone = { mainHandler.post { onDone() } },
+            onError = { _, _ -> mainHandler.post { onDone() } }
+        )
     }
 
     fun speakDirect(text: String, onDone: () -> Unit = {}) {

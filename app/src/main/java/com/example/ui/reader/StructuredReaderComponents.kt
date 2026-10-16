@@ -38,6 +38,7 @@ import com.example.model.*
 import com.example.tts.ActiveEngineType
 import com.example.tts.TtsMode
 import com.example.viewmodel.JurisTechUiState
+import com.example.ui.theme.*
 import com.example.viewmodel.JurisTechViewModel
 
 /**
@@ -345,33 +346,74 @@ fun TtsSettingsDialog(
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-                if (uiState.availableTtsVoices.isNotEmpty()) {
-                    Text(
-                        text = "Voz Activa",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    uiState.availableTtsVoices.take(6).forEach { voiceName ->
-                        val isSelected = uiState.activeTtsVoice == voiceName
+                Text(
+                    text = "Voz de Lectura (Solo Hombre / Mujer)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                listOf(
+                    com.example.tts.VoiceGender.HOMBRE,
+                    com.example.tts.VoiceGender.MUJER
+                ).forEach { gender ->
+                    val isSelected = uiState.selectedVoiceGender == gender
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) JtGreenPrimary.copy(alpha = 0.1f) else Color.Transparent,
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) JtGreenPrimary else JtBorder
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                            .clickable { viewModel.setVoiceGender(gender) }
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { viewModel.setVoiceByName(voiceName) }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            RadioButton(
-                                selected = isSelected,
-                                onClick = { viewModel.setVoiceByName(voiceName) }
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = voiceName,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { viewModel.setVoiceGender(gender) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = JtGreenPrimary)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = gender.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = JtPrimaryText
+                                    )
+                                    Text(
+                                        text = if (uiState.isNetworkAvailable) "IA Natural (Humana)" else "Local sin internet",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (uiState.isNetworkAvailable) JtGreenPrimary else JtGold,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.previewVoice(gender) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = "Escuchar ${gender.displayName}",
+                                    tint = if (isSelected) JtGreenPrimary else JtSecondaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }

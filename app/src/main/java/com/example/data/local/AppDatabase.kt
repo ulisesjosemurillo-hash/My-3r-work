@@ -130,6 +130,14 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration(dropAllTables = true)
+                    .addCallback(object : RoomDatabase.Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            try {
+                                db.execSQL("UPDATE recent_documents SET pagesJson = 'file:pages_' || id || '.json' WHERE length(pagesJson) > 500")
+                            } catch (_: Throwable) {}
+                        }
+                    })
                     .build()
                 INSTANCE = instance
                 instance

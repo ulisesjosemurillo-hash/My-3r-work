@@ -445,4 +445,55 @@ object PdfStructureParser {
         )
         return Pair(structuredTable, tableLines.size)
     }
+
+    /**
+     * Construye un índice jerárquico ligero recorriendo los encabezados de todas las páginas
+     * sin necesidad de generar decenas de miles de bloques en memoria.
+     */
+    fun buildOutlineFromPages(pages: List<DocumentPage>): List<PdfOutlineNode> {
+        val result = mutableListOf<PdfOutlineNode>()
+        for (page in pages) {
+            val lines = page.texto.split("\n")
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (CHAPTER_REGEX.matches(trimmed) || isProbableChapterHeading(trimmed)) {
+                    result.add(
+                        PdfOutlineNode(
+                            title = trimmed.take(65).trim(),
+                            pageNumber = page.numero,
+                            fragmentId = 0,
+                            level = 1,
+                            isAiInferred = false
+                        )
+                    )
+                } else if (ARTICLE_REGEX.matches(trimmed)) {
+                    result.add(
+                        PdfOutlineNode(
+                            title = trimmed.take(65).trim(),
+                            pageNumber = page.numero,
+                            fragmentId = 0,
+                            level = 2,
+                            isAiInferred = false
+                        )
+                    )
+                }
+                if (result.size >= 250) break
+            }
+            if (result.size >= 250) break
+        }
+        if (result.isEmpty()) {
+            val byPages = pages.groupBy { (it.numero - 1) / 10 }
+            return byPages.map { (_, pList) ->
+                val firstP = pList.first()
+                PdfOutlineNode(
+                    title = "Página ${firstP.numero} - ${pList.last().numero}",
+                    pageNumber = firstP.numero,
+                    fragmentId = 0,
+                    level = 0,
+                    isAiInferred = true
+                )
+            }
+        }
+        return result
+    }
 }

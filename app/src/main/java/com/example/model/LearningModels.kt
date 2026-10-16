@@ -122,3 +122,61 @@ data class StudySessionStats(
     val reviewingConceptsCount: Int = 0,
     val accuracyPercent: Int = 0
 )
+
+/**
+ * Marca de tiempo sincronizada para resaltar texto conforme la voz sintética habla.
+ */
+data class TimedTextHighlight(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String,
+    val startChar: Int,
+    val endChar: Int,
+    val startMs: Long,
+    val durationMs: Long
+)
+
+/**
+ * Ejercicio o pregunta interactiva práctica para poner a prueba la comprensión del lector antes de continuar.
+ */
+data class InteractiveExercise(
+    val id: String = UUID.randomUUID().toString(),
+    val question: String,
+    val practicalScenario: String = "",
+    val options: List<String> = emptyList(),
+    val correctIndex: Int = 0,
+    val explanation: String = "",
+    val hint: String = ""
+)
+
+/**
+ * Sección corta y coherente con resumen conceptual, descripción visual multimedia y ejercicios bloqueantes.
+ */
+data class MultimodalLessonSection(
+    val id: String = UUID.randomUUID().toString(),
+    val sectionIndex: Int = 0,
+    val title: String,
+    val content: String,
+    val keyConceptSummary: String,
+    val visualMediaDescription: String,
+    val visualConceptTitle: String = "Ilustración Conceptual",
+    val visualMediaCategory: String = "Infografía Conceptual",
+    val exercises: List<InteractiveExercise> = emptyList(),
+    val timedHighlights: List<TimedTextHighlight> = emptyList(),
+    val isCompleted: Boolean = false,
+    val selectedOptionIndex: Int? = null,
+    val isExercisePassed: Boolean = false,
+    val showHint: Boolean = false
+)
+
+/**
+ * Lección interactiva multimodal completa generada por el tutor personal.
+ */
+data class MultimodalLesson(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val documentTitle: String,
+    val sourcePage: Int = 1,
+    val sections: List<MultimodalLessonSection> = emptyList(),
+    val activeSectionIndex: Int = 0,
+    val isFinished: Boolean = false
+)

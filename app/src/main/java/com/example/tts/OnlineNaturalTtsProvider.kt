@@ -12,9 +12,10 @@ import android.util.Log
 import java.util.Locale
 
 /**
- * Proveedor de voz natural online.
+ * Proveedor de voz natural online con Inteligencia Artificial.
  * Cuando hay conexión a internet disponible, sintetiza voz con entonación natural,
- * pausas orgánicas y selección de voces neurales / de red de alta fidelidad.
+ * pausas orgánicas humanas, expansión fonética de términos jurídicos y selección
+ * de voces neurales / de red de alta fidelidad para Hombre y Mujer.
  */
 class OnlineNaturalTtsProvider(
     private val context: Context
@@ -24,15 +25,16 @@ class OnlineNaturalTtsProvider(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var isReady = false
-    private var currentRate = 0.95f
-    private var currentPitch = 1.0f
+    private var userRate = 0.95f
+    private var userPitch = 1.0f
+    private var currentGender: VoiceGender = VoiceGender.MUJER
     private var pendingInitCallback: ((Boolean) -> Unit)? = null
 
     private var activeOnStart: ((Int) -> Unit)? = null
     private var activeOnDone: ((Int) -> Unit)? = null
     private var activeOnError: ((Int, String) -> Unit)? = null
 
-    override val name: String = "Voz Natural Online (Red / Redes Neuronales)"
+    override val name: String = "Voz Natural Online IA (Red / Redes Neuronales)"
     override val isOnline: Boolean = true
     override val isAvailable: Boolean get() = isReady && isNetworkConnected()
 
@@ -49,24 +51,14 @@ class OnlineNaturalTtsProvider(
         if (status == TextToSpeech.SUCCESS) {
             val engine = tts ?: return
 
-            // Preferir voz en español natural
+            // Configurar español (es-ES / es-US / es-419)
             var res = engine.setLanguage(Locale.forLanguageTag("es-ES"))
             if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
                 res = engine.setLanguage(Locale.forLanguageTag("es"))
             }
 
-            engine.setSpeechRate(currentRate)
-            engine.setPitch(currentPitch)
-
-            // Buscar y predeterminar una voz de red o de alta calidad
-            val networkVoice = engine.voices?.firstOrNull {
-                it.locale.language.startsWith("es", ignoreCase = true) &&
-                        (it.isNetworkConnectionRequired || it.quality >= Voice.QUALITY_VERY_HIGH || it.name.contains("network"))
-            }
-            if (networkVoice != null) {
-                engine.voice = networkVoice
-                Log.d(tag, "Seleccionada voz natural de red: ${networkVoice.name}")
-            }
+            // Aplicar género de voz seleccionado (Hombre o Mujer)
+            applyVoiceGender(currentGender)
 
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
@@ -110,64 +102,109 @@ class OnlineNaturalTtsProvider(
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    override fun getAvailableVoices(): List<VoiceProfile> {
-        val engine = tts ?: return emptyList()
-        return try {
-            val voices = engine.voices ?: return emptyList()
-            // Filtrar voces de alta calidad o de red
-            val filtered = voices.filter {
-                it.locale.language.startsWith("es", ignoreCase = true)
-            }.map { voice ->
-                val isNet = voice.isNetworkConnectionRequired || voice.name.contains("network")
-                VoiceProfile(
-                    id = voice.name,
-                    name = if (isNet) "Voz Natural Online (${voice.locale.displayCountry})" else "Voz ${voice.locale.displayCountry}",
-                    locale = voice.locale.toLanguageTag(),
-                    isNetworkRequired = isNet,
-                    isNatural = true,
-                    quality = if (isNet) "Neural Natural Online" else "Estándar"
-                )
+    override fun setVoiceGender(gender: VoiceGender) {
+        currentGender = gender
+        if (isReady && tts != null) {
+            applyVoiceGender(gender)
+        }
+    }
+
+    private fun applyVoiceGender(gender: VoiceGender) {
+        val engine = tts ?: return
+        try {
+            val voices = engine.voices ?: emptySet()
+            val spanishVoices = voices.filter { it.locale.language.startsWith("es", ignoreCase = true) }
+
+            val targetVoice: Voice? = when (gender) {
+                VoiceGender.HOMBRE -> {
+                    // Buscar voces masculinas neurales o de red en español
+                    spanishVoices.firstOrNull { voice ->
+                        val name = voice.name.lowercase()
+                        (voice.isNetworkConnectionRequired || name.contains("network")) &&
+                                (name.contains("eed") || name.contains("eee") || name.contains("esd") ||
+                                        name.contains("male") || name.contains("hombre") || name.contains("masc"))
+                    } ?: spanishVoices.firstOrNull { voice ->
+                        val name = voice.name.lowercase()
+                        name.contains("eed") || name.contains("eee") || name.contains("esd") ||
+                                name.contains("male") || name.contains("hombre") || name.contains("masc")
+                    } ?: spanishVoices.firstOrNull { it.isNetworkConnectionRequired || it.name.contains("network") }
+                }
+                VoiceGender.MUJER -> {
+                    // Buscar voces femeninas neurales o de red en español
+                    spanishVoices.firstOrNull { voice ->
+                        val name = voice.name.lowercase()
+                        (voice.isNetworkConnectionRequired || name.contains("network")) &&
+                                (name.contains("eea") || name.contains("ana") || name.contains("sfb") ||
+                                        name.contains("female") || name.contains("mujer") || name.contains("fem"))
+                    } ?: spanishVoices.firstOrNull { voice ->
+                        val name = voice.name.lowercase()
+                        name.contains("eea") || name.contains("ana") || name.contains("sfb") ||
+                                name.contains("female") || name.contains("mujer") || name.contains("fem")
+                    } ?: spanishVoices.firstOrNull { it.isNetworkConnectionRequired || it.name.contains("network") }
+                }
             }
 
-            if (filtered.isNotEmpty()) {
-                filtered.sortedByDescending { it.isNetworkRequired }
-            } else {
-                listOf(
-                    VoiceProfile(
-                        id = "default_online_es",
-                        name = "Voz Natural Neural (Español Estándar)",
-                        locale = "es-ES",
-                        isNetworkRequired = true,
-                        isNatural = true,
-                        quality = "Neural Alta Fidelidad"
-                    )
-                )
+            if (targetVoice != null) {
+                engine.voice = targetVoice
+                Log.d(tag, "Asignada voz online para ${gender.displayName}: ${targetVoice.name}")
             }
+
+            // Calibración acústica para realismo humano:
+            // Hombre: resonancia barítono cálida (~0.88f pitch), cadencia pausada (~0.94f)
+            // Mujer: melodía clara y articulada (~1.10f pitch), cadencia equilibrada (~0.96f)
+            val effectivePitch = when (gender) {
+                VoiceGender.HOMBRE -> userPitch * 0.88f
+                VoiceGender.MUJER -> userPitch * 1.10f
+            }
+            val effectiveRate = when (gender) {
+                VoiceGender.HOMBRE -> userRate * 0.94f
+                VoiceGender.MUJER -> userRate * 0.96f
+            }
+
+            engine.setPitch(effectivePitch)
+            engine.setSpeechRate(effectiveRate)
         } catch (e: Exception) {
-            emptyList()
+            Log.e(tag, "Error aplicando género de voz online", e)
         }
+    }
+
+    override fun getAvailableVoices(): List<VoiceProfile> {
+        // Exclusivamente las dos opciones requeridas por el usuario
+        return listOf(
+            VoiceProfile(
+                id = VoiceGender.HOMBRE.id,
+                name = VoiceGender.HOMBRE.displayName,
+                locale = "es-ES",
+                isNetworkRequired = true,
+                isNatural = true,
+                quality = "IA Neural Natural",
+                gender = VoiceGender.HOMBRE
+            ),
+            VoiceProfile(
+                id = VoiceGender.MUJER.id,
+                name = VoiceGender.MUJER.displayName,
+                locale = "es-ES",
+                isNetworkRequired = true,
+                isNatural = true,
+                quality = "IA Neural Natural",
+                gender = VoiceGender.MUJER
+            )
+        )
     }
 
     override fun setVoice(voiceId: String) {
-        val engine = tts ?: return
-        try {
-            val target = engine.voices?.firstOrNull { it.name == voiceId }
-            if (target != null) {
-                engine.voice = target
-            }
-        } catch (e: Exception) {
-            Log.e(tag, "Error asignando voz natural: $voiceId", e)
-        }
+        val gender = VoiceGender.fromId(voiceId)
+        setVoiceGender(gender)
     }
 
     override fun setSpeechRate(rate: Float) {
-        currentRate = rate
-        tts?.setSpeechRate(rate)
+        userRate = rate
+        applyVoiceGender(currentGender)
     }
 
     override fun setPitch(pitch: Float) {
-        currentPitch = pitch
-        tts?.setPitch(pitch)
+        userPitch = pitch
+        applyVoiceGender(currentGender)
     }
 
     override fun speakFragment(
@@ -178,7 +215,7 @@ class OnlineNaturalTtsProvider(
         onError: (Int, String) -> Unit
     ) {
         if (!isNetworkConnected()) {
-            onError(fragmentId, "Sin conexión a internet para voz natural online.")
+            onError(fragmentId, "Sin conexión a internet para voz natural online IA.")
             return
         }
 
@@ -193,10 +230,9 @@ class OnlineNaturalTtsProvider(
         activeOnError = onError
 
         try {
-            // Preprocesamiento de prosodia natural: pausas suaves en comas y dos puntos
+            // Formatear texto con prosodia orgánica y expansión fonética humana
             val naturalText = formatForNaturalProsody(text)
-            engine.setSpeechRate(currentRate)
-            engine.setPitch(currentPitch)
+            applyVoiceGender(currentGender)
             engine.speak(naturalText, TextToSpeech.QUEUE_FLUSH, null, fragmentId.toString())
         } catch (e: Exception) {
             Log.e(tag, "Error en reproducción online", e)
@@ -223,10 +259,34 @@ class OnlineNaturalTtsProvider(
         tts = null
     }
 
+    /**
+     * Transforma texto para que la voz con IA se escuche como una persona real:
+     * - Pausas respiratorias humanas en comas, puntos y dos puntos.
+     * - Expansión natural de abreviaturas jurídicas y académicas.
+     * - Formato fonético que elimina monotonía robótica.
+     */
     private fun formatForNaturalProsody(text: String): String {
-        // Asegura pausas orgánicas en puntuaciones
-        return text.replace(";", "; ")
+        return text
+            // Expansiones jurídicas y académicas para pronunciación humana
+            .replace(Regex("\\bArt\\.\\s*", RegexOption.IGNORE_CASE), "Artículo ")
+            .replace(Regex("\\bArts\\.\\s*", RegexOption.IGNORE_CASE), "Artículos ")
+            .replace(Regex("\\bPág\\.\\s*", RegexOption.IGNORE_CASE), "Página ")
+            .replace(Regex("\\bPágs\\.\\s*", RegexOption.IGNORE_CASE), "Páginas ")
+            .replace(Regex("\\bNúm\\.\\s*", RegexOption.IGNORE_CASE), "Número ")
+            .replace(Regex("\\bNo\\.\\s*", RegexOption.IGNORE_CASE), "Número ")
+            .replace(Regex("\\bInc\\.\\s*", RegexOption.IGNORE_CASE), "Inciso ")
+            .replace(Regex("\\bC\\.P\\.\\s*", RegexOption.IGNORE_CASE), "Código Penal ")
+            .replace(Regex("\\bConst\\.\\s*", RegexOption.IGNORE_CASE), "Constitución ")
+            .replace(Regex("\\betc\\.\\s*", RegexOption.IGNORE_CASE), "etcétera, ")
+            .replace(Regex("\\bi\\.e\\.\\s*", RegexOption.IGNORE_CASE), "es decir, ")
+            .replace(Regex("\\be\\.g\\.\\s*", RegexOption.IGNORE_CASE), "por ejemplo, ")
+            // Ritmo y pausas orgánicas
+            .replace(";", "; ")
             .replace(":", ": ")
-            .replace("  ", " ")
+            .replace("...", ". ")
+            .replace("—", ", ")
+            .replace("–", ", ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 }

@@ -75,4 +75,56 @@ class RecentDocumentRepositoryTest {
         val emptyRecents = repository.recentDocuments.first()
         assertEquals(0, emptyRecents.size)
     }
+
+    @Test
+    fun testLargeDocumentStreamingAndWindowLoading() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repoWithContext = RecentDocumentRepository(database.recentDocumentDao(), context = context)
+
+        // Simular documento extenso de 1,720 páginas
+        val largePages = (1..1720).map { pageNum ->
+            DocumentPage(
+                numero = pageNum,
+                texto = "Contenido jurídico de la página $pageNum del compendio normativo extenso."
+            )
+        }
+
+        val docId = "doc_large_1720"
+        repoWithContext.saveOrUpdateDocument(
+            id = docId,
+            title = "Compendio Jurídico Integral (1720 Páginas)",
+            subtitle = "Código y Jurisprudencia",
+            pages = largePages,
+            totalFragments = 3500,
+            lastPage = 500,
+            lastFragmentIndex = 1200,
+            sourceType = "IMPORTED"
+        )
+
+        // 1. Verificar que en Room la referencia es file: y no sobrecarga SQLite CursorWindow
+        val doc = database.recentDocumentDao().getDocumentById(docId)
+        org.junit.Assert.assertNotNull(doc)
+        org.junit.Assert.assertTrue(doc!!.pagesJson.startsWith("file:"))
+
+        // 2. Verificar que parsePages carga todas las 1,720 páginas en modo ligero sin agotar memoria
+        val loadedPages = repoWithContext.parsePages(doc.pagesJson, docId)
+        assertEquals(1720, loadedPages.size)
+
+        // 3. Verificar que loadPageWindow carga el texto completo de una ventana específica (ej. página 500)
+        val window = repoWithContext.loadPageWindow(docId, targetPage = 500, windowRadius = 5)
+        org.junit.Assert.assertTrue(window.isNotEmpty())
+        val page500 = window.firstOrNull { it.numero == 500 }
+        org.junit.Assert.assertNotNull(page500)
+        assertEquals(
+            "Contenido jurídico de la página 500 del compendio normativo extenso.",
+            page500!!.texto
+        )
+
+        // 4. Verificar lectura directa de página individual en O(1)
+        val singlePageText = repoWithContext.getPageText(docId, 1720)
+        assertEquals(
+            "Contenido jurídico de la página 1720 del compendio normativo extenso.",
+            singlePageText
+        )
+    }
 }

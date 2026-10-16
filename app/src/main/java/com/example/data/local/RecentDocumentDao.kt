@@ -9,13 +9,16 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface RecentDocumentDao {
 
-    @Query("SELECT * FROM recent_documents ORDER BY lastAccessedTimestamp DESC")
+    @Query("SELECT id, title, subtitle, totalPages, totalFragments, lastPage, lastFragmentIndex, lastAccessedTimestamp, CASE WHEN length(pagesJson) > 500 THEN 'file:pages_' || id || '.json' ELSE pagesJson END AS pagesJson, sourceType, customCoverUri, coverColor, highlightsJson, opinionsJson, bookmarksJson, audioCommentsJson, questionsHistoryJson, author, materia, year, description, collection, tagsJson, generalNotes, positionHistoryJson FROM recent_documents ORDER BY lastAccessedTimestamp DESC")
     fun getAllRecentDocuments(): Flow<List<RecentDocumentEntity>>
 
-    @Query("SELECT * FROM recent_documents WHERE id = :id LIMIT 1")
+    @Query("UPDATE recent_documents SET pagesJson = 'file:pages_' || id || '.json' WHERE length(pagesJson) > 500")
+    suspend fun sanitizeOversizedRows()
+
+    @Query("SELECT id, title, subtitle, totalPages, totalFragments, lastPage, lastFragmentIndex, lastAccessedTimestamp, CASE WHEN length(pagesJson) > 500 THEN 'file:pages_' || id || '.json' ELSE pagesJson END AS pagesJson, sourceType, customCoverUri, coverColor, highlightsJson, opinionsJson, bookmarksJson, audioCommentsJson, questionsHistoryJson, author, materia, year, description, collection, tagsJson, generalNotes, positionHistoryJson FROM recent_documents WHERE id = :id LIMIT 1")
     suspend fun getDocumentById(id: String): RecentDocumentEntity?
 
-    @Query("SELECT * FROM recent_documents WHERE title = :title LIMIT 1")
+    @Query("SELECT id, title, subtitle, totalPages, totalFragments, lastPage, lastFragmentIndex, lastAccessedTimestamp, CASE WHEN length(pagesJson) > 500 THEN 'file:pages_' || id || '.json' ELSE pagesJson END AS pagesJson, sourceType, customCoverUri, coverColor, highlightsJson, opinionsJson, bookmarksJson, audioCommentsJson, questionsHistoryJson, author, materia, year, description, collection, tagsJson, generalNotes, positionHistoryJson FROM recent_documents WHERE title = :title LIMIT 1")
     suspend fun getDocumentByTitle(title: String): RecentDocumentEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -68,7 +71,7 @@ interface RecentDocumentDao {
     @Query("UPDATE recent_documents SET positionHistoryJson = :positionHistoryJson WHERE id = :id")
     suspend fun updatePositionHistory(id: String, positionHistoryJson: String)
 
-    @Query("SELECT * FROM recent_documents")
+    @Query("SELECT id, title, subtitle, totalPages, totalFragments, lastPage, lastFragmentIndex, lastAccessedTimestamp, CASE WHEN length(pagesJson) > 500 THEN 'file:pages_' || id || '.json' ELSE pagesJson END AS pagesJson, sourceType, customCoverUri, coverColor, highlightsJson, opinionsJson, bookmarksJson, audioCommentsJson, questionsHistoryJson, author, materia, year, description, collection, tagsJson, generalNotes, positionHistoryJson FROM recent_documents")
     suspend fun getAllDocumentsList(): List<RecentDocumentEntity>
 
     @Query("DELETE FROM recent_documents WHERE id = :id")

@@ -126,13 +126,65 @@ data class SampleDocument(
     val title: String,
     val subtitle: String,
     val pages: List<DocumentPage>,
-    val coverColor: Long? = null
+    val coverColor: Long? = null,
+    val materia: String = "Derecho",
+    val author: String = "Poder Legislativo",
+    val year: String = "2024"
 )
 
 object SampleDocumentRepository {
 
     val hondurasSamples: List<SampleDocument> = listOf(
-        com.example.data.CodigoPenalHondurasData.document
+        com.example.data.CodigoPenalHondurasData.document.copy(
+            materia = "Derecho Penal",
+            author = "Congreso Nacional",
+            year = "2017"
+        ),
+        com.example.data.ConstitucionHondurasData.document.copy(
+            materia = "Derecho Constitucional",
+            author = "Asamblea Nacional Constituyente",
+            year = "1982"
+        ),
+        com.example.data.LeyTransitoHondurasData.document.copy(
+            materia = "Derecho Administrativo y Vial",
+            author = "Poder Legislativo",
+            year = "2005"
+        ),
+        com.example.data.CodigoTrabajoHondurasData.document.copy(
+            materia = "Derecho Laboral",
+            author = "Congreso Nacional",
+            year = "1959"
+        ),
+        com.example.data.CodigoCivilHondurasData.document.copy(
+            materia = "Derecho Civil y Contratos",
+            author = "Congreso Nacional",
+            year = "1906"
+        ),
+        com.example.data.CodigoComercioHondurasData.document.copy(
+            materia = "Derecho Mercantil y Corporativo",
+            author = "Congreso Nacional",
+            year = "1950"
+        ),
+        com.example.data.CodigoProcesalPenalHondurasData.document.copy(
+            materia = "Derecho Procesal Penal",
+            author = "Congreso Nacional",
+            year = "2002"
+        ),
+        com.example.data.LeyCiberseguridadHondurasData.document.copy(
+            materia = "Derecho Informático y Privacidad",
+            author = "Congreso Nacional",
+            year = "2024"
+        ),
+        com.example.data.TratadoDerechosHumanosData.document.copy(
+            materia = "Derechos Humanos y Tratados",
+            author = "OEA - Pacto de San José",
+            year = "1969"
+        ),
+        com.example.data.CodigoNinezHondurasData.document.copy(
+            materia = "Derecho de Familia y Niñez",
+            author = "Congreso Nacional",
+            year = "1996"
+        )
     )
 
     val samples: List<SampleDocument> = hondurasSamples
@@ -177,3 +229,12 @@ object SampleDocumentRepository {
     }
 }
 
+enum class ChatProcessState(val label: String, val icon: String) {
+    READY("Listo", "✓"),
+    LISTENING("Escuchando voz...", "🎙"),
+    TRANSCRIBING("Transcribiendo...", "✍"),
+    SEARCHING("Buscando en el documento...", "🔎"),
+    GENERATING("Generando respuesta...", "⚖"),
+    PREPARING_AUDIO("Preparando audio...", "🔊"),
+    PLAYING_AUDIO("Leyendo respuesta...", "▶")
+}

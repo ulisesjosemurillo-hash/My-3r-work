@@ -10,11 +10,42 @@ enum class TtsMode(val label: String, val description: String) {
 }
 
 /**
+ * Solo dos opciones de voz disponibles para el usuario:
+ * 1. Voz de Hombre (IA Natural con internet / local offline sin internet)
+ * 2. Voz de Mujer (IA Natural con internet / local offline sin internet)
+ */
+enum class VoiceGender(
+    val id: String,
+    val displayName: String,
+    val shortLabel: String,
+    val description: String
+) {
+    HOMBRE(
+        id = "HOMBRE",
+        displayName = "Voz de Hombre",
+        shortLabel = "Hombre",
+        description = "Voz masculina con entonación natural de persona mediante IA (online) o motor local (offline)"
+    ),
+    MUJER(
+        id = "MUJER",
+        displayName = "Voz de Mujer",
+        shortLabel = "Mujer",
+        description = "Voz femenina con entonación natural de persona mediante IA (online) o motor local (offline)"
+    );
+
+    companion object {
+        fun fromId(id: String): VoiceGender {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: MUJER
+        }
+    }
+}
+
+/**
  * Tipo de motor activo en un instante dado.
  */
 enum class ActiveEngineType(val label: String) {
-    ONLINE("Online Natural"),
-    LOCAL("Local del Dispositivo")
+    ONLINE("Online Natural (IA)"),
+    LOCAL("Local del Dispositivo (Offline)")
 }
 
 /**
@@ -26,7 +57,8 @@ data class VoiceProfile(
     val locale: String,
     val isNetworkRequired: Boolean,
     val isNatural: Boolean,
-    val quality: String = "Estándar"
+    val quality: String = "Estándar",
+    val gender: VoiceGender = VoiceGender.MUJER
 )
 
 /**
@@ -40,6 +72,7 @@ interface TtsProvider {
     fun initialize(onReady: (Boolean) -> Unit)
     fun getAvailableVoices(): List<VoiceProfile>
     fun setVoice(voiceId: String)
+    fun setVoiceGender(gender: VoiceGender)
     fun setSpeechRate(rate: Float)
     fun setPitch(pitch: Float)
     fun speakFragment(
@@ -52,3 +85,4 @@ interface TtsProvider {
     fun stop()
     fun shutdown()
 }
+

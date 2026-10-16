@@ -71,10 +71,12 @@ data class JurisTechUiState(
     val documentGeneralNotes: String = "",
     val activeHighlightColorHex: String = "#FFF59D",
     val isUnderlineMode: Boolean = false,
-    val highlightItems: List<HighlightItem> = emptyList(),
     val positionHistory: List<PositionHistoryItem> = emptyList(),
-    val activeTtsVoice: String = "",
-    val availableTtsVoices: List<String> = emptyList(),
+    val libraryFeedbackMessage: String? = null,
+    val selectedVoiceGender: com.example.tts.VoiceGender = com.example.tts.VoiceGender.MUJER,
+    val isTtsPreviewPlaying: Boolean = false,
+    val activeTtsVoice: String = "Voz de Mujer",
+    val availableTtsVoices: List<String> = listOf("Voz de Hombre", "Voz de Mujer"),
     val studySummary: String = "",
     val studyOutline: List<String> = emptyList(),
     val studyExamQuestions: List<ExamQuestion> = emptyList(),
@@ -133,7 +135,21 @@ data class JurisTechUiState(
     val isSemanticSearchMode: Boolean = false,
     val semanticSearchResults: List<SemanticSearchResult> = emptyList(),
     val isSemanticSearching: Boolean = false,
-    val selectedOutlineNodeId: String? = null
+    val selectedOutlineNodeId: String? = null,
+    val isChatVoiceListening: Boolean = false,
+    val chatVoiceStatus: String = "",
+    val autoReadChatResponses: Boolean = false,
+    val isReadingChatResponse: Boolean = false,
+    val isReadingChatPaused: Boolean = false,
+    val playingChatMessageIndex: Int? = null,
+    val chatProcessState: ChatProcessState = ChatProcessState.READY,
+    val chatSpeechRate: Float = 1.0f,
+    val activeMultimodalLesson: MultimodalLesson? = null,
+    val isGeneratingMultimodalLesson: Boolean = false,
+    val showMultimodalLessonScreen: Boolean = false,
+    val isLessonSpeechPlaying: Boolean = false,
+    val currentSpokenHighlightIndex: Int = -1,
+    val lessonSpeechRate: Float = 1.0f
 )
 
 class JurisTechViewModel(application: Application) : AndroidViewModel(application) {
@@ -143,7 +159,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val database = AppDatabase.getDatabase(application)
     private val highlightDao = database.highlightDao()
-    private val repository = RecentDocumentRepository(database.recentDocumentDao(), highlightDao)
+    private val repository = RecentDocumentRepository(database.recentDocumentDao(), highlightDao, application)
     val studyRepository = com.example.data.local.learning.StudyRepository(database.studyDao())
 
     private val aiService = JurisTechAiService()
@@ -153,20 +169,24 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     private val audioRecordManager = com.example.util.AudioRecordManager(application)
     private var speechHelper: com.example.util.SpeechRecognitionHelper? = null
     private var pomodoroJob: kotlinx.coroutines.Job? = null
+    private var lessonSpeechJob: kotlinx.coroutines.Job? = null
     private val prefs = application.getSharedPreferences("juristech_prefs", android.content.Context.MODE_PRIVATE)
 
     init {
         val savedSpeechRate = prefs.getFloat("speech_rate", 1.0f)
         val savedFontSizeScale = prefs.getFloat("font_size_scale", 1.0f)
         val savedLineSpacing = prefs.getFloat("line_spacing", 1.5f)
-        val savedVoice = prefs.getString("tts_voice", "") ?: ""
+        val savedVoiceGenderId = prefs.getString("tts_voice_gender", com.example.tts.VoiceGender.MUJER.id) ?: com.example.tts.VoiceGender.MUJER.id
+        val initialVoiceGender = com.example.tts.VoiceGender.fromId(savedVoiceGenderId)
+        val savedVoice = prefs.getString("tts_voice", initialVoiceGender.displayName) ?: initialVoiceGender.displayName
         val savedUnderline = prefs.getBoolean("is_underline_mode", false)
         val savedHighlightColor = prefs.getString("highlight_color", "#FFF59D") ?: "#FFF59D"
         _uiState.value = _uiState.value.copy(
             speechRate = savedSpeechRate,
             fontSizeScale = savedFontSizeScale,
             lineSpacing = savedLineSpacing,
-            activeTtsVoice = savedVoice,
+            selectedVoiceGender = initialVoiceGender,
+            activeTtsVoice = initialVoiceGender.displayName,
             isUnderlineMode = savedUnderline,
             activeHighlightColorHex = savedHighlightColor
         )
@@ -174,43 +194,71 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         ttsManager = TtsManager(
             context = application,
             onFragmentStarted = { fragmentId ->
-                val state = _uiState.value
-                val frag = state.fragmentosLectura.getOrNull(state.indiceActual)
-                if (frag != null && frag.id == fragmentId) {
+                if (fragmentId == -999) {
                     _uiState.value = _uiState.value.copy(
-                        voiceStatus = "🔊 Leyendo página ${frag.pagina}"
+                        isReadingChatResponse = true,
+                        isReadingChatPaused = false,
+                        chatProcessState = ChatProcessState.PLAYING_AUDIO
                     )
+                } else {
+                    val state = _uiState.value
+                    val frag = state.fragmentosLectura.getOrNull(state.indiceActual)
+                    if (frag != null && frag.id == fragmentId) {
+                        _uiState.value = _uiState.value.copy(
+                            voiceStatus = "🔊 Leyendo página ${frag.pagina}"
+                        )
+                    }
                 }
             },
             onFragmentCompleted = { fragmentId ->
-                val state = _uiState.value
-                if (state.lecturaActiva) {
-                    val nextIndex = state.indiceActual + 1
-                    val newBlockCount = state.fragmentsInCurrentBlock + 1
-                    if (state.learningMode == ReaderLearningMode.GUIDED_LEARNING && newBlockCount >= state.guidedBlockSize) {
-                        _uiState.value = _uiState.value.copy(
-                            indiceActual = if (nextIndex < state.fragmentosLectura.size) nextIndex else state.indiceActual,
-                            lecturaActiva = false,
-                            fragmentsInCurrentBlock = 0,
-                            voiceStatus = "🧠 Bloque completado. Momento de evocación activa."
-                        )
-                        persistirProgresoActual(state.indiceActual)
-                        activarPreguntaGuiada()
-                    } else if (nextIndex < state.fragmentosLectura.size) {
-                        _uiState.value = _uiState.value.copy(
-                            indiceActual = nextIndex,
-                            fragmentsInCurrentBlock = newBlockCount
-                        )
-                        persistirProgresoActual(nextIndex)
-                        leerFragmentoActual()
-                    } else {
-                        _uiState.value = _uiState.value.copy(
-                            lecturaActiva = false,
-                            voiceStatus = "Lectura finalizada.",
-                            showContinueButton = false,
-                            fragmentsInCurrentBlock = 0
-                        )
-                        persistirProgresoActual(state.indiceActual)
+                if (fragmentId == -888) {
+                    _uiState.value = _uiState.value.copy(
+                        isLessonSpeechPlaying = false,
+                        currentSpokenHighlightIndex = -1
+                    )
+                } else if (fragmentId == -999) {
+                    _uiState.value = _uiState.value.copy(
+                        isReadingChatResponse = false,
+                        isReadingChatPaused = false,
+                        playingChatMessageIndex = null,
+                        chatProcessState = ChatProcessState.READY
+                    )
+                } else {
+                    val state = _uiState.value
+                    if (state.lecturaActiva) {
+                        val nextIndex = state.indiceActual + 1
+                        val newBlockCount = state.fragmentsInCurrentBlock + 1
+                        if (state.learningMode == ReaderLearningMode.GUIDED_LEARNING && newBlockCount >= state.guidedBlockSize) {
+                            _uiState.value = _uiState.value.copy(
+                                indiceActual = if (nextIndex < state.fragmentosLectura.size) nextIndex else state.indiceActual,
+                                lecturaActiva = false,
+                                fragmentsInCurrentBlock = 0,
+                                voiceStatus = "🧠 Bloque completado. Momento de evocación activa."
+                            )
+                            persistirProgresoActual(state.indiceActual)
+                            activarPreguntaGuiada()
+                        } else if (nextIndex < state.fragmentosLectura.size) {
+                            _uiState.value = _uiState.value.copy(
+                                indiceActual = nextIndex,
+                                fragmentsInCurrentBlock = newBlockCount
+                            )
+                            persistirProgresoActual(nextIndex)
+                            leerFragmentoActual()
+                        } else {
+                            val lastFrag = state.fragmentosLectura.lastOrNull()
+                            val lastPageInWindow = lastFrag?.pagina ?: 1
+                            if (state.paginas.size > 80 && lastPageInWindow < state.paginas.size) {
+                                avanzarVentanaLectura(lastPageInWindow + 1)
+                            } else {
+                                _uiState.value = _uiState.value.copy(
+                                    lecturaActiva = false,
+                                    voiceStatus = "Lectura finalizada.",
+                                    showContinueButton = false,
+                                    fragmentsInCurrentBlock = 0
+                                )
+                                persistirProgresoActual(state.indiceActual)
+                            }
+                        }
                     }
                 }
             },
@@ -228,6 +276,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             }
         )
         ttsManager?.setSpeechRate(savedSpeechRate)
+        ttsManager?.setVoiceGender(initialVoiceGender)
 
         val hasSpanish = ttsManager?.hasSpanishLocalVoicesInstalled() ?: true
         if (!hasSpanish) {
@@ -283,16 +332,8 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             repository.recentDocuments.collect { recents ->
                 _uiState.value = _uiState.value.copy(recentDocuments = recents)
 
-                // Eliminar cualquier documento de muestra anterior que no sea el Código Penal
-                val oldSamples = recents.filter {
-                    it.sourceType == "SAMPLE" && !it.title.contains("Código Penal", ignoreCase = true)
-                }
-                if (oldSamples.isNotEmpty()) {
-                    oldSamples.forEach { repository.deleteDocument(it.id) }
-                }
-
                 val hasCodigoPenal = recents.any { it.title.contains("Código Penal", ignoreCase = true) }
-                if (!hasCodigoPenal) {
+                if (recents.isEmpty() || !hasCodigoPenal) {
                     sembrarCodigoPenal()
                 }
             }
@@ -318,12 +359,151 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun clearLibraryFeedbackMessage() {
+        _uiState.value = _uiState.value.copy(libraryFeedbackMessage = null)
+    }
+
     fun sembrarCodigosHonduras() {
-        sembrarCodigoPenal()
+        agregarTodosLosLibrosDelCatalogo()
     }
 
     fun restaurarCodigosHonduras() {
-        sembrarCodigoPenal()
+        agregarTodosLosLibrosDelCatalogo()
+    }
+
+    fun agregarLibroALaBiblioteca(sample: SampleDocument, abrirAhora: Boolean = false) {
+        if (abrirAhora) {
+            cargarSample(sample)
+            return
+        }
+        viewModelScope.launch {
+            val sampleId = "sample_" + sample.title.hashCode().toString()
+            val fragments = SampleDocumentRepository.crearFragmentos(sample.pages)
+            repository.saveOrUpdateDocument(
+                id = sampleId,
+                title = sample.title,
+                subtitle = sample.subtitle,
+                pages = sample.pages,
+                totalFragments = fragments.size,
+                lastPage = 1,
+                lastFragmentIndex = 0,
+                sourceType = "SAMPLE",
+                coverColor = sample.coverColor,
+                author = sample.author,
+                materia = sample.materia,
+                year = sample.year
+            )
+            _uiState.value = _uiState.value.copy(
+                libraryFeedbackMessage = "✓ '${sample.title}' se añadió a tu biblioteca"
+            )
+        }
+    }
+
+    fun agregarTodosLosLibrosDelCatalogo() {
+        viewModelScope.launch {
+            val currentTitles = _uiState.value.recentDocuments.map { it.title.trim().lowercase() }.toSet()
+            var addedCount = 0
+            SampleDocumentRepository.hondurasSamples.forEach { sample ->
+                if (!currentTitles.contains(sample.title.trim().lowercase())) {
+                    val sampleId = "sample_" + sample.title.hashCode().toString()
+                    val fragments = SampleDocumentRepository.crearFragmentos(sample.pages)
+                    repository.saveOrUpdateDocument(
+                        id = sampleId,
+                        title = sample.title,
+                        subtitle = sample.subtitle,
+                        pages = sample.pages,
+                        totalFragments = fragments.size,
+                        lastPage = 1,
+                        lastFragmentIndex = 0,
+                        sourceType = "SAMPLE",
+                        coverColor = sample.coverColor,
+                        author = sample.author,
+                        materia = sample.materia,
+                        year = sample.year
+                    )
+                    addedCount++
+                }
+            }
+            _uiState.value = _uiState.value.copy(
+                libraryFeedbackMessage = if (addedCount > 0) "✓ Se añadieron $addedCount libros a tu biblioteca" else "Todos los libros del catálogo ya están en tu biblioteca"
+            )
+        }
+    }
+
+    fun crearNuevoLibroPersonalizado(
+        titulo: String,
+        autor: String = "Autor Desconocido",
+        materia: String = "Derecho",
+        contenido: String,
+        abrirAhora: Boolean = false
+    ) {
+        if (contenido.isBlank() || titulo.isBlank()) return
+
+        val lineas = contenido.split("\n\n").filter { it.isNotBlank() }
+        val paginasCreadas = mutableListOf<DocumentPage>()
+        var bufferTexto = StringBuilder()
+        var numeroPagina = 1
+
+        for (linea in lineas) {
+            bufferTexto.append(linea).append("\n\n")
+            if (bufferTexto.split(Regex("\\s+")).size >= 160) {
+                paginasCreadas.add(
+                    DocumentPage(
+                        numero = numeroPagina++,
+                        texto = bufferTexto.toString().trim()
+                    )
+                )
+                bufferTexto = StringBuilder()
+            }
+        }
+
+        if (bufferTexto.isNotBlank()) {
+            paginasCreadas.add(
+                DocumentPage(
+                    numero = numeroPagina,
+                    texto = bufferTexto.toString().trim()
+                )
+            )
+        }
+
+        if (paginasCreadas.isEmpty()) {
+            paginasCreadas.add(DocumentPage(numero = 1, texto = contenido.trim()))
+        }
+
+        val generatedDocId = "doc_" + System.currentTimeMillis()
+
+        if (abrirAhora) {
+            cargarDocumentoCompleto(
+                id = generatedDocId,
+                titulo = titulo.trim(),
+                subtitulo = "${paginasCreadas.size} páginas • $materia",
+                paginas = paginasCreadas,
+                sourceType = "IMPORTED",
+                author = autor.trim(),
+                materia = materia.trim(),
+                year = "2024"
+            )
+        } else {
+            viewModelScope.launch {
+                val fragments = SampleDocumentRepository.crearFragmentos(paginasCreadas)
+                repository.saveOrUpdateDocument(
+                    id = generatedDocId,
+                    title = titulo.trim(),
+                    subtitle = "${paginasCreadas.size} páginas • $materia",
+                    pages = paginasCreadas,
+                    totalFragments = fragments.size,
+                    lastPage = 1,
+                    lastFragmentIndex = 0,
+                    sourceType = "IMPORTED",
+                    author = autor.trim(),
+                    materia = materia.trim(),
+                    year = "2024"
+                )
+                _uiState.value = _uiState.value.copy(
+                    libraryFeedbackMessage = "✓ Libro '$titulo' añadido a tu biblioteca"
+                )
+            }
+        }
     }
 
     fun setCurrentTab(tab: Int) {
@@ -343,7 +523,10 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             subtitulo = sample.subtitle,
             paginas = sample.pages,
             sourceType = "SAMPLE",
-            coverColor = sample.coverColor
+            coverColor = sample.coverColor,
+            author = sample.author,
+            materia = sample.materia,
+            year = sample.year
         )
     }
 
@@ -352,11 +535,11 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         paginas: List<DocumentPage>,
         subtitulo: String = "Documento importado",
         customCoverUri: String? = null,
-        coverColor: Long? = null
+        coverColor: Long? = null,
+        id: String = "doc_" + System.currentTimeMillis()
     ) {
-        val docId = "doc_" + System.currentTimeMillis()
         cargarDocumentoCompleto(
-            id = docId,
+            id = id,
             titulo = titulo,
             subtitulo = subtitulo,
             paginas = paginas,
@@ -366,6 +549,53 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
+    private fun getPagesWindow(allPages: List<DocumentPage>, targetPage: Int, windowRadius: Int = 20): List<DocumentPage> {
+        if (allPages.size <= 80) return allPages
+        val startPage = (targetPage - windowRadius).coerceAtLeast(1)
+        val endPage = (targetPage + windowRadius).coerceAtMost(allPages.size)
+        return allPages.filter { it.numero in startPage..endPage }
+    }
+
+    private fun actualizarVentanaLectura(targetPage: Int) {
+        val state = _uiState.value
+        val allPages = state.paginas
+        if (allPages.size <= 80) return
+        val docId = state.currentDocumentId
+        viewModelScope.launch {
+            val fromDisk = repository.loadPageWindow(docId, targetPage, windowRadius = 25)
+            val windowPages = if (fromDisk.isNotEmpty()) fromDisk else getPagesWindow(allPages, targetPage, windowRadius = 25)
+            val fragmentos = SampleDocumentRepository.crearFragmentos(windowPages)
+            val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(docId, windowPages)
+            _uiState.value = _uiState.value.copy(
+                fragmentosLectura = fragmentos,
+                structuredBlocks = blocks,
+                pageStructures = structures
+            )
+        }
+    }
+
+    private fun avanzarVentanaLectura(startPage: Int) {
+        val state = _uiState.value
+        val docId = state.currentDocumentId
+        viewModelScope.launch {
+            val fromDisk = repository.loadPageWindow(docId, startPage, windowRadius = 25)
+            val windowPages = if (fromDisk.isNotEmpty()) fromDisk else getPagesWindow(state.paginas, startPage, windowRadius = 25)
+            if (windowPages.isNotEmpty()) {
+                val fragmentos = SampleDocumentRepository.crearFragmentos(windowPages)
+                val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(docId, windowPages)
+                _uiState.value = _uiState.value.copy(
+                    fragmentosLectura = fragmentos,
+                    structuredBlocks = blocks,
+                    pageStructures = structures,
+                    indiceActual = 0,
+                    currentOriginalPage = startPage
+                )
+                renderizarPaginaVisual(startPage)
+                leerFragmentoActual()
+            }
+        }
+    }
+
     private fun cargarDocumentoCompleto(
         id: String,
         titulo: String,
@@ -373,12 +603,26 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         paginas: List<DocumentPage>,
         sourceType: String,
         customCoverUri: String? = null,
-        coverColor: Long? = null
+        coverColor: Long? = null,
+        author: String = "",
+        materia: String = "",
+        year: String = "",
+        collection: String = ""
     ) {
         ttsManager?.stop()
-        val fragmentos = SampleDocumentRepository.crearFragmentos(paginas)
-        val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(id, paginas)
-        val outline = com.example.util.PdfStructureParser.buildOutlineTree(blocks)
+
+        val isLargeDoc = paginas.size > 80
+        val windowPages = if (isLargeDoc) getPagesWindow(paginas, targetPage = 1, windowRadius = 25) else paginas
+        val fragmentos = SampleDocumentRepository.crearFragmentos(windowPages)
+        val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(id, windowPages)
+        val diskOutline = com.example.util.DocumentPageStorage.readOutline(getApplication(), id)
+        val outline = if (diskOutline.isNotEmpty()) {
+            diskOutline
+        } else if (isLargeDoc) {
+            com.example.util.PdfStructureParser.buildOutlineFromPages(windowPages)
+        } else {
+            com.example.util.PdfStructureParser.buildOutlineTree(blocks)
+        }
 
         _uiState.value = _uiState.value.copy(
             currentDocumentId = id,
@@ -394,6 +638,10 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             lecturaPausadaPorPregunta = false,
             customCoverUri = customCoverUri,
             coverColor = coverColor,
+            documentAuthor = author,
+            documentMateria = materia,
+            documentYear = year,
+            documentCollection = collection,
             highlights = emptySet(),
             opinions = emptyList(),
             bookmarks = emptyList(),
@@ -409,6 +657,12 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         )
 
         viewModelScope.launch {
+            val pdfFile = com.example.util.DocumentPageStorage.getDocumentPdfFile(getApplication(), id)
+            if (pdfFile.exists() && pdfFile.length() > 0L) {
+                pdfPageRenderer.openFile(pdfFile)
+            } else {
+                pdfPageRenderer.close()
+            }
             renderizarPaginaVisual(1)
         }
 
@@ -424,7 +678,11 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 lastFragmentIndex = 0,
                 sourceType = sourceType,
                 customCoverUri = customCoverUri,
-                coverColor = coverColor
+                coverColor = coverColor,
+                author = author,
+                materia = materia,
+                year = year,
+                collection = collection
             )
         }
     }
@@ -437,7 +695,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     fun retomarDocumento(entity: RecentDocumentEntity) {
         ttsManager?.stop()
 
-        var paginas = repository.parsePages(entity.pagesJson)
+        var paginas = repository.parsePages(entity.pagesJson, entity.id)
         if (paginas.isEmpty()) {
             val sampleMatch = SampleDocumentRepository.samples.firstOrNull { it.title == entity.title }
             if (sampleMatch != null) {
@@ -447,70 +705,90 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (paginas.isEmpty()) return
 
-        val fragmentos = SampleDocumentRepository.crearFragmentos(paginas)
-        val indiceRestaurado = entity.lastFragmentIndex.coerceIn(0, maxOf(0, fragmentos.size - 1))
-        val paginaRestaurada = fragmentos.getOrNull(indiceRestaurado)?.pagina ?: entity.lastPage
-
-        val highlights = repository.parseHighlights(entity.highlightsJson)
-        val opinions = repository.parseOpinions(entity.opinionsJson)
-        val bookmarks = repository.parseBookmarks(entity.bookmarksJson)
-        val audioComments = repository.parseAudioComments(entity.audioCommentsJson)
-        val savedQuestions = repository.parseQuestions(entity.questionsHistoryJson)
-
-        val initialChat = if (savedQuestions.isNotEmpty()) {
-            savedQuestions
-        } else {
-            listOf(
-                ChatMessage(
-                    remitente = "JurisTech AI",
-                    texto = "Has retomado '${entity.title}'. Posición actual: Página $paginaRestaurada de ${paginas.size} (fragmento ${indiceRestaurado + 1}/${fragmentos.size}).",
-                    isUser = false
-                )
-            )
-        }
-
-        val tagsList = try {
-            val arr = org.json.JSONArray(entity.tagsJson)
-            val list = mutableListOf<String>()
-            for (i in 0 until arr.length()) list.add(arr.getString(i))
-            list
-        } catch (_: Exception) { emptyList<String>() }
-
-        val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(entity.id, paginas)
-        val outline = com.example.util.PdfStructureParser.buildOutlineTree(blocks)
-
-        _uiState.value = _uiState.value.copy(
-            currentDocumentId = entity.id,
-            documentTitle = entity.title,
-            paginas = paginas,
-            fragmentosLectura = fragmentos,
-            structuredBlocks = blocks,
-            pageStructures = structures,
-            structuredOutline = outline,
-            currentOriginalPage = paginaRestaurada,
-            indiceActual = indiceRestaurado,
-            lecturaActiva = false,
-            lecturaPausadaPorPregunta = false,
-            customCoverUri = entity.customCoverUri,
-            coverColor = entity.coverColor,
-            highlights = highlights,
-            opinions = opinions,
-            bookmarks = bookmarks,
-            audioComments = audioComments,
-            voiceStatus = "Lectura retomada en Página $paginaRestaurada (${indiceRestaurado + 1}/${fragmentos.size}).",
-            showContinueButton = false,
-            isContinueEnabled = false,
-            chatMessages = initialChat,
-            documentAuthor = entity.author,
-            documentMateria = entity.materia,
-            documentYear = entity.year,
-            documentDescription = entity.description,
-            documentCollection = entity.collection,
-            documentTags = tagsList,
-            documentGeneralNotes = entity.generalNotes
-        )
+        val isLargeDoc = paginas.size > 80 || entity.totalPages > 80
+        val paginaRestaurada = entity.lastPage.coerceIn(1, maxOf(1, paginas.size))
 
         viewModelScope.launch {
+            val windowPages = if (isLargeDoc) {
+                val fromDisk = repository.loadPageWindow(entity.id, paginaRestaurada, 25)
+                if (fromDisk.isNotEmpty()) fromDisk else getPagesWindow(paginas, targetPage = paginaRestaurada, windowRadius = 25)
+            } else paginas
+
+            val fragmentos = SampleDocumentRepository.crearFragmentos(windowPages)
+            val indiceRestaurado = entity.lastFragmentIndex.coerceIn(0, maxOf(0, fragmentos.size - 1))
+
+            val highlights = repository.parseHighlights(entity.highlightsJson)
+            val opinions = repository.parseOpinions(entity.opinionsJson)
+            val bookmarks = repository.parseBookmarks(entity.bookmarksJson)
+            val audioComments = repository.parseAudioComments(entity.audioCommentsJson)
+            val savedQuestions = repository.parseQuestions(entity.questionsHistoryJson)
+
+            val initialChat = if (savedQuestions.isNotEmpty()) {
+                savedQuestions
+            } else {
+                listOf(
+                    ChatMessage(
+                        remitente = "JurisTech AI",
+                        texto = "Has retomado '${entity.title}'. Posición actual: Página $paginaRestaurada de ${paginas.size}.",
+                        isUser = false
+                    )
+                )
+            }
+
+            val tagsList = try {
+                val arr = org.json.JSONArray(entity.tagsJson)
+                val list = mutableListOf<String>()
+                for (i in 0 until arr.length()) list.add(arr.getString(i))
+                list
+            } catch (_: Exception) { emptyList<String>() }
+
+            val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(entity.id, windowPages)
+            val diskOutline = com.example.util.DocumentPageStorage.readOutline(getApplication(), entity.id)
+            val outline = if (diskOutline.isNotEmpty()) {
+                diskOutline
+            } else if (isLargeDoc) {
+                com.example.util.PdfStructureParser.buildOutlineFromPages(windowPages)
+            } else {
+                com.example.util.PdfStructureParser.buildOutlineTree(blocks)
+            }
+
+            _uiState.value = _uiState.value.copy(
+                currentDocumentId = entity.id,
+                documentTitle = entity.title,
+                paginas = paginas,
+                fragmentosLectura = fragmentos,
+                structuredBlocks = blocks,
+                pageStructures = structures,
+                structuredOutline = outline,
+                currentOriginalPage = paginaRestaurada,
+                indiceActual = indiceRestaurado,
+                lecturaActiva = false,
+                lecturaPausadaPorPregunta = false,
+                customCoverUri = entity.customCoverUri,
+                coverColor = entity.coverColor,
+                highlights = highlights,
+                opinions = opinions,
+                bookmarks = bookmarks,
+                audioComments = audioComments,
+                voiceStatus = "Lectura retomada en Página $paginaRestaurada (${indiceRestaurado + 1}/${fragmentos.size}).",
+                showContinueButton = false,
+                isContinueEnabled = false,
+                chatMessages = initialChat,
+                documentAuthor = entity.author,
+                documentMateria = entity.materia,
+                documentYear = entity.year,
+                documentDescription = entity.description,
+                documentCollection = entity.collection,
+                documentTags = tagsList,
+                documentGeneralNotes = entity.generalNotes
+            )
+
+            val pdfFile = com.example.util.DocumentPageStorage.getDocumentPdfFile(getApplication(), entity.id)
+            if (pdfFile.exists() && pdfFile.length() > 0L) {
+                pdfPageRenderer.openFile(pdfFile)
+            } else {
+                pdfPageRenderer.close()
+            }
             renderizarPaginaVisual(paginaRestaurada)
             repository.updateReadingProgress(entity.id, paginaRestaurada, indiceRestaurado)
         }
@@ -851,10 +1129,32 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saltarAPagina(numeroPagina: Int) {
         val state = _uiState.value
-        val index = state.fragmentosLectura.indexOfFirst { it.pagina == numeroPagina }
+        val clampedPage = numeroPagina.coerceIn(1, maxOf(1, state.paginas.size))
+        var index = state.fragmentosLectura.indexOfFirst { it.pagina == clampedPage }
+        if (index < 0 && state.paginas.size > 80) {
+            val docId = state.currentDocumentId
+            viewModelScope.launch {
+                val fromDisk = repository.loadPageWindow(docId, clampedPage, windowRadius = 25)
+                val windowPages = if (fromDisk.isNotEmpty()) fromDisk else getPagesWindow(state.paginas, clampedPage, windowRadius = 25)
+                val fragmentos = SampleDocumentRepository.crearFragmentos(windowPages)
+                val (structures, blocks) = com.example.util.PdfStructureParser.parseDocument(docId, windowPages)
+                val targetIndex = fragmentos.indexOfFirst { it.pagina == clampedPage }.coerceAtLeast(0)
+                _uiState.value = _uiState.value.copy(
+                    fragmentosLectura = fragmentos,
+                    structuredBlocks = blocks,
+                    pageStructures = structures,
+                    indiceActual = targetIndex,
+                    currentOriginalPage = clampedPage
+                )
+                renderizarPaginaVisual(clampedPage)
+                persistirProgresoActual(targetIndex)
+            }
+            return
+        }
         if (index >= 0) {
             saltarAFragmento(index)
         }
+        cambiarPaginaOriginal(clampedPage)
     }
 
     fun buscarEnBiblioteca(query: String) {
@@ -882,6 +1182,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             val context = getApplication<Application>()
             val coverFile = java.io.File(context.filesDir, "covers/cover_${id}.jpg")
             if (coverFile.exists()) coverFile.delete()
+            com.example.util.DocumentPageStorage.deleteDocumentStorage(context, id)
         } catch (_: Exception) {}
 
         if (_uiState.value.currentDocumentId == id) {
@@ -895,7 +1196,10 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun procesarArchivoPdf(uri: Uri, nombreArchivo: String) {
         ttsManager?.stop()
+        pdfPageRenderer.close()
         limpiarError()
+
+        val generatedDocId = "doc_" + System.currentTimeMillis()
 
         _uiState.value = _uiState.value.copy(
             isProcessingPdf = true,
@@ -910,6 +1214,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                     context = getApplication(),
                     uri = uri,
                     fileName = nombreArchivo,
+                    documentId = generatedDocId,
                     onProgress = { current, total, text ->
                         val percent = if (total > 0) ((current.toFloat() / total) * 100).toInt().coerceIn(5, 98) else 50
                         _uiState.value = _uiState.value.copy(
@@ -920,12 +1225,20 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 result.onSuccess { paginas ->
+                    val pdfFile = com.example.util.DocumentPageStorage.getDocumentPdfFile(getApplication(), generatedDocId)
+                    if (pdfFile.exists() && pdfFile.length() > 0L) {
+                        pdfPageRenderer.openFile(pdfFile)
+                    } else {
+                        pdfPageRenderer.close()
+                    }
+
                     _uiState.value = _uiState.value.copy(
                         isProcessingPdf = false,
                         pdfProgressPercent = 100,
                         pdfProgressText = "Documento procesado correctamente."
                     )
                     cargarDocumentoPersonalizado(
+                        id = generatedDocId,
                         titulo = nombreArchivo,
                         paginas = paginas,
                         subtitulo = "${paginas.size} páginas procesadas"
@@ -949,6 +1262,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun cerrarDocumento() {
         ttsManager?.stop()
+        pdfPageRenderer.close()
         _uiState.value = _uiState.value.copy(
             currentDocumentId = "",
             documentTitle = "",
@@ -1198,9 +1512,29 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setVoiceByName(voiceName: String) {
-        ttsManager?.setVoiceByName(voiceName)
-        _uiState.value = _uiState.value.copy(activeTtsVoice = voiceName)
-        prefs.edit().putString("tts_voice", voiceName).apply()
+        val gender = if (voiceName.contains("Hombre", ignoreCase = true) || voiceName.equals(com.example.tts.VoiceGender.HOMBRE.id, ignoreCase = true)) {
+            com.example.tts.VoiceGender.HOMBRE
+        } else {
+            com.example.tts.VoiceGender.MUJER
+        }
+        setVoiceGender(gender)
+    }
+
+    fun setVoiceGender(gender: com.example.tts.VoiceGender) {
+        ttsManager?.setVoiceGender(gender, continuePlayingCurrentFragment = _uiState.value.lecturaActiva || _uiState.value.isLessonSpeechPlaying)
+        _uiState.value = _uiState.value.copy(
+            selectedVoiceGender = gender,
+            activeTtsVoice = gender.displayName
+        )
+        prefs.edit().putString("tts_voice_gender", gender.id).apply()
+        prefs.edit().putString("tts_voice", gender.displayName).apply()
+    }
+
+    fun previewVoice(gender: com.example.tts.VoiceGender) {
+        _uiState.value = _uiState.value.copy(isTtsPreviewPlaying = true)
+        ttsManager?.previewVoice(gender) {
+            _uiState.value = _uiState.value.copy(isTtsPreviewPlaying = false)
+        }
     }
 
     fun leerDesdeBloqueEstructurado(block: StructuredBlock) {
@@ -1374,10 +1708,10 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
                     if (doc.materia.isNotBlank()) append("Materia: ${doc.materia}\n")
                     if (doc.year.isNotBlank()) append("Año: ${doc.year}\n")
                     if (doc.description.isNotBlank()) append("Descripción: ${doc.description}\n\n")
-                    val samplePages = repository.parsePages(doc.pagesJson)
-                    if (samplePages.isNotEmpty()) {
+                    val firstPage = repository.getPageText(doc.id, 1)
+                    if (firstPage.isNotBlank()) {
                         append("Fragmento inicial:\n")
-                        append(samplePages.first().texto.take(300))
+                        append(firstPage.take(300))
                         append("...\n\n")
                     }
                     append("Compartido desde JurisTech Reader.")
@@ -1416,9 +1750,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setTtsVoice(voiceName: String) {
-        _uiState.value = _uiState.value.copy(activeTtsVoice = voiceName)
-        prefs.edit().putString("tts_voice", voiceName).apply()
-        ttsManager?.setVoiceByName(voiceName)
+        setVoiceByName(voiceName)
     }
 
     fun recargarVocesDisponibles() {
@@ -1585,6 +1917,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         if (_uiState.value.lecturaActiva) {
             activarPregunta()
         }
+        detenerLecturaChat()
 
         agregarMensaje(remitente = "Tú", texto = preguntaLimpia, isUser = true)
         val state = _uiState.value
@@ -1593,15 +1926,21 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         val paginas = state.paginas
         val historialConversacion = state.chatMessages
 
-        _uiState.value = _uiState.value.copy(isAskingAi = true)
+        _uiState.value = _uiState.value.copy(
+            isAskingAi = true,
+            chatProcessState = ChatProcessState.SEARCHING
+        )
 
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(chatProcessState = ChatProcessState.GENERATING)
             val respuesta = aiService.responderPreguntaConHistorial(
                 pregunta = preguntaLimpia,
                 documentTitle = documentTitle,
                 paginas = paginas,
                 paginaActual = paginaActual,
-                historialConversacion = historialConversacion
+                historialConversacion = historialConversacion,
+                context = getApplication(),
+                documentId = state.currentDocumentId
             )
 
             val regexPage = Regex("Página (\\d+)")
@@ -1626,6 +1965,7 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             _uiState.value = _uiState.value.copy(
                 chatMessages = updatedMessages,
                 isAskingAi = false,
+                chatProcessState = if (_uiState.value.autoReadChatResponses) ChatProcessState.PREPARING_AUDIO else ChatProcessState.READY,
                 showContinueButton = true,
                 isContinueEnabled = true,
                 voiceStatus = "Pregunta respondida. Puedes hacer preguntas de seguimiento o pulsar CONTINUAR."
@@ -1635,7 +1975,121 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
             if (docId.isNotBlank()) {
                 repository.updateQuestionsHistory(docId, updatedMessages)
             }
+
+            if (_uiState.value.autoReadChatResponses) {
+                leerRespuestaChat(updatedMessages.lastIndex, respuesta)
+            }
         }
+    }
+
+    fun toggleChatVoiceListening(onResult: (String) -> Unit) {
+        if (_uiState.value.isChatVoiceListening) {
+            speechHelper?.stopListening()
+            _uiState.value = _uiState.value.copy(
+                isChatVoiceListening = false,
+                chatProcessState = ChatProcessState.READY,
+                chatVoiceStatus = "Listo"
+            )
+        } else {
+            detenerLecturaChat()
+            _uiState.value = _uiState.value.copy(
+                isChatVoiceListening = true,
+                chatProcessState = ChatProcessState.LISTENING,
+                chatVoiceStatus = "🎙 Escuchando voz... Habla tu consulta jurídica"
+            )
+            speechHelper?.startListening(
+                customOnResultText = { recognizedText ->
+                    _uiState.value = _uiState.value.copy(
+                        isChatVoiceListening = false,
+                        chatProcessState = ChatProcessState.READY,
+                        chatVoiceStatus = "Voz capturada con éxito."
+                    )
+                    onResult(recognizedText)
+                },
+                customOnStateChanged = { listening, status ->
+                    val newState = if (listening) ChatProcessState.LISTENING
+                        else if (status.contains("Transcribiendo", ignoreCase = true)) ChatProcessState.TRANSCRIBING
+                        else ChatProcessState.READY
+                    _uiState.value = _uiState.value.copy(
+                        isChatVoiceListening = listening,
+                        chatProcessState = newState,
+                        chatVoiceStatus = status
+                    )
+                }
+            )
+        }
+    }
+
+    fun leerRespuestaChat(messageIndex: Int, texto: String) {
+        if (_uiState.value.playingChatMessageIndex == messageIndex && _uiState.value.isReadingChatResponse) {
+            pausarLecturaChat()
+            return
+        }
+        if (_uiState.value.playingChatMessageIndex == messageIndex && _uiState.value.isReadingChatPaused) {
+            reanudarLecturaChat(texto)
+            return
+        }
+        ttsManager?.stop()
+        ttsManager?.setSpeechRate(_uiState.value.chatSpeechRate)
+        _uiState.value = _uiState.value.copy(
+            playingChatMessageIndex = messageIndex,
+            isReadingChatResponse = true,
+            isReadingChatPaused = false,
+            chatProcessState = ChatProcessState.PLAYING_AUDIO
+        )
+        val cleanSpeech = texto
+            .replace("Texto encontrado en el documento:", "Pasaje del documento:")
+            .replace("Página ", "en la página ")
+            .replace(Regex("[*#_✓•]"), "")
+        ttsManager?.speak(cleanSpeech)
+    }
+
+    fun pausarLecturaChat() {
+        ttsManager?.stop()
+        _uiState.value = _uiState.value.copy(
+            isReadingChatResponse = false,
+            isReadingChatPaused = true,
+            chatProcessState = ChatProcessState.READY
+        )
+    }
+
+    fun reanudarLecturaChat(texto: String? = null) {
+        val state = _uiState.value
+        val msgIdx = state.playingChatMessageIndex ?: return
+        val currentText = texto ?: state.chatMessages.getOrNull(msgIdx)?.texto ?: return
+        ttsManager?.stop()
+        ttsManager?.setSpeechRate(state.chatSpeechRate)
+        _uiState.value = _uiState.value.copy(
+            isReadingChatResponse = true,
+            isReadingChatPaused = false,
+            chatProcessState = ChatProcessState.PLAYING_AUDIO
+        )
+        val cleanSpeech = currentText
+            .replace("Texto encontrado en el documento:", "Pasaje del documento:")
+            .replace("Página ", "en la página ")
+            .replace(Regex("[*#_✓•]"), "")
+        ttsManager?.speak(cleanSpeech)
+    }
+
+    fun detenerLecturaChat() {
+        ttsManager?.stop()
+        _uiState.value = _uiState.value.copy(
+            playingChatMessageIndex = null,
+            isReadingChatResponse = false,
+            isReadingChatPaused = false,
+            chatProcessState = ChatProcessState.READY
+        )
+    }
+
+    fun cambiarVelocidadChat(rate: Float) {
+        _uiState.value = _uiState.value.copy(chatSpeechRate = rate)
+        ttsManager?.setSpeechRate(rate)
+    }
+
+    fun toggleAutoReadChatResponses() {
+        _uiState.value = _uiState.value.copy(
+            autoReadChatResponses = !_uiState.value.autoReadChatResponses
+        )
     }
 
     fun limpiarChat() {
@@ -1940,8 +2394,208 @@ class JurisTechViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.value = _uiState.value.copy(studyStats = stats)
     }
 
+    // ==========================================
+    // TUTOR PERSONAL MULTIMODAL DE APRENDIZAJE
+    // ==========================================
+
+    fun generarLeccionMultimodalPaginaActual() {
+        val state = _uiState.value
+        val pagNum = obtenerPaginaActual()
+        val pag = state.paginas.firstOrNull { it.numero == pagNum }
+        val texto = pag?.texto ?: state.fragmentosLectura.getOrNull(state.indiceActual)?.texto ?: ""
+        if (texto.isBlank()) return
+        generarLeccionMultimodalParaTexto(state.documentTitle, texto, pagNum)
+    }
+
+    fun generarLeccionMultimodalFragmento(fragmento: FragmentoLectura) {
+        val state = _uiState.value
+        generarLeccionMultimodalParaTexto(state.documentTitle, fragmento.texto, fragmento.pagina)
+    }
+
+    fun generarLeccionMultimodalParaTexto(documentTitle: String, texto: String, pagina: Int) {
+        detenerLecturaLeccion()
+        _uiState.value = _uiState.value.copy(
+            isGeneratingMultimodalLesson = true,
+            showMultimodalLessonScreen = true,
+            currentSpokenHighlightIndex = -1,
+            isLessonSpeechPlaying = false
+        )
+
+        viewModelScope.launch {
+            val lesson = learningEngine.transformarEnLeccionMultimodal(
+                documentTitle = documentTitle,
+                fragmentoTexto = texto,
+                pagina = pagina
+            )
+
+            _uiState.value = _uiState.value.copy(
+                activeMultimodalLesson = lesson,
+                isGeneratingMultimodalLesson = false
+            )
+        }
+    }
+
+    fun abrirTutorMultimodal() {
+        if (_uiState.value.activeMultimodalLesson == null) {
+            generarLeccionMultimodalPaginaActual()
+        } else {
+            _uiState.value = _uiState.value.copy(showMultimodalLessonScreen = true)
+        }
+    }
+
+    fun cerrarTutorMultimodal() {
+        detenerLecturaLeccion()
+        _uiState.value = _uiState.value.copy(showMultimodalLessonScreen = false)
+    }
+
+    fun seleccionarSeccionLeccion(index: Int) {
+        detenerLecturaLeccion()
+        val lesson = _uiState.value.activeMultimodalLesson ?: return
+        if (index in lesson.sections.indices) {
+            _uiState.value = _uiState.value.copy(
+                activeMultimodalLesson = lesson.copy(activeSectionIndex = index),
+                currentSpokenHighlightIndex = -1
+            )
+        }
+    }
+
+    fun setLessonSpeechRate(rate: Float) {
+        val clamped = rate.coerceIn(0.6f, 2.0f)
+        _uiState.value = _uiState.value.copy(lessonSpeechRate = clamped)
+        if (_uiState.value.isLessonSpeechPlaying) {
+            val lesson = _uiState.value.activeMultimodalLesson
+            val section = lesson?.sections?.getOrNull(lesson.activeSectionIndex)
+            if (section != null) {
+                reproducirSeccionLeccionSincronizada(section)
+            }
+        }
+    }
+
+    fun toggleReproduccionSeccionLeccion() {
+        if (_uiState.value.isLessonSpeechPlaying) {
+            detenerLecturaLeccion()
+        } else {
+            val lesson = _uiState.value.activeMultimodalLesson ?: return
+            val section = lesson.sections.getOrNull(lesson.activeSectionIndex) ?: return
+            reproducirSeccionLeccionSincronizada(section)
+        }
+    }
+
+    fun reproducirSeccionLeccionSincronizada(section: MultimodalLessonSection) {
+        detenerLecturaLeccion()
+        ttsManager?.stop()
+
+        _uiState.value = _uiState.value.copy(
+            isLessonSpeechPlaying = true,
+            currentSpokenHighlightIndex = if (section.timedHighlights.isNotEmpty()) 0 else -1
+        )
+
+        // Reproducir audio usando TTS del dispositivo
+        ttsManager?.setSpeechRate(_uiState.value.lessonSpeechRate)
+        ttsManager?.speakFragment(
+            fragmentId = -888, // Identificador dedicado para tutor multimodal
+            text = section.content
+        )
+
+        // Marcas de tiempo sincronizadas para resaltado visual continuo de lectura (karaoke visual)
+        lessonSpeechJob = viewModelScope.launch {
+            val highlights = section.timedHighlights
+            val speedFactor = _uiState.value.lessonSpeechRate.coerceAtLeast(0.5f)
+            for (idx in highlights.indices) {
+                if (!_uiState.value.isLessonSpeechPlaying) break
+                _uiState.value = _uiState.value.copy(currentSpokenHighlightIndex = idx)
+                val duration = (highlights[idx].durationMs / speedFactor).toLong().coerceAtLeast(100L)
+                kotlinx.coroutines.delay(duration)
+            }
+            if (_uiState.value.isLessonSpeechPlaying) {
+                _uiState.value = _uiState.value.copy(
+                    isLessonSpeechPlaying = false,
+                    currentSpokenHighlightIndex = -1
+                )
+            }
+        }
+    }
+
+    fun detenerLecturaLeccion() {
+        lessonSpeechJob?.cancel()
+        lessonSpeechJob = null
+        ttsManager?.stop()
+        _uiState.value = _uiState.value.copy(
+            isLessonSpeechPlaying = false,
+            currentSpokenHighlightIndex = -1
+        )
+    }
+
+    fun responderEjercicioLeccion(sectionIndex: Int, exerciseIndex: Int, selectedOptionIndex: Int) {
+        val lesson = _uiState.value.activeMultimodalLesson ?: return
+        val section = lesson.sections.getOrNull(sectionIndex) ?: return
+        val exercise = section.exercises.getOrNull(exerciseIndex) ?: return
+
+        val isCorrect = selectedOptionIndex == exercise.correctIndex
+        val updatedSection = section.copy(
+            selectedOptionIndex = selectedOptionIndex,
+            isExercisePassed = isCorrect,
+            isCompleted = isCorrect // Desbloquea la continuación cuando es correcto
+        )
+
+        val updatedSections = lesson.sections.toMutableList()
+        updatedSections[sectionIndex] = updatedSection
+
+        val allCompleted = updatedSections.all { it.isCompleted }
+
+        _uiState.value = _uiState.value.copy(
+            activeMultimodalLesson = lesson.copy(
+                sections = updatedSections,
+                isFinished = allCompleted
+            )
+        )
+
+        // Registrar progreso pedagógico en Room
+        viewModelScope.launch {
+            studyRepository.recordStudySession(
+                documentId = _uiState.value.currentDocumentId,
+                documentTitle = _uiState.value.documentTitle,
+                mode = "MULTIMODAL_LESSON",
+                durationMinutes = 3,
+                questionsAnswered = 1,
+                questionsCorrect = if (isCorrect) 1 else 0,
+                selfReflection = if (isCorrect) "Comprensión verificada: ${section.title}" else "Revisión conceptual necesaria"
+            )
+            actualizarEstadisticasEstudio()
+        }
+    }
+
+    fun toggleHintEjercicioLeccion(sectionIndex: Int) {
+        val lesson = _uiState.value.activeMultimodalLesson ?: return
+        val section = lesson.sections.getOrNull(sectionIndex) ?: return
+        val updatedSection = section.copy(showHint = !section.showHint)
+        val updatedSections = lesson.sections.toMutableList()
+        updatedSections[sectionIndex] = updatedSection
+        _uiState.value = _uiState.value.copy(
+            activeMultimodalLesson = lesson.copy(sections = updatedSections)
+        )
+    }
+
+    fun avanzarSiguienteSeccionLeccion() {
+        detenerLecturaLeccion()
+        val lesson = _uiState.value.activeMultimodalLesson ?: return
+        val currentIdx = lesson.activeSectionIndex
+        val nextIdx = currentIdx + 1
+        if (nextIdx < lesson.sections.size) {
+            _uiState.value = _uiState.value.copy(
+                activeMultimodalLesson = lesson.copy(activeSectionIndex = nextIdx),
+                currentSpokenHighlightIndex = -1
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(
+                activeMultimodalLesson = lesson.copy(isFinished = true)
+            )
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
+        lessonSpeechJob?.cancel()
         pomodoroJob?.cancel()
         speechHelper?.stopListening()
         ttsManager?.shutdown()

@@ -21,12 +21,13 @@ object DocumentExtractor {
         context: Context,
         uri: Uri,
         fileName: String,
+        documentId: String = "",
         onProgress: (current: Int, total: Int, text: String) -> Unit
     ): Result<List<DocumentPage>> = withContext(Dispatchers.IO) {
         val lowerName = fileName.lowercase()
         when {
             lowerName.endsWith(".pdf") -> {
-                PdfExtractor.extractTextFromPdf(context, uri, onProgress)
+                PdfExtractor.extractTextFromPdf(context, uri, documentId, onProgress)
             }
             lowerName.endsWith(".docx") -> {
                 extractFromDocx(context, uri, onProgress)
@@ -36,7 +37,7 @@ object DocumentExtractor {
             }
             else -> {
                 // Intento primario como PDF y secundario como texto plano
-                val pdfResult = PdfExtractor.extractTextFromPdf(context, uri, onProgress)
+                val pdfResult = PdfExtractor.extractTextFromPdf(context, uri, documentId, onProgress)
                 if (pdfResult.isSuccess) {
                     pdfResult
                 } else {

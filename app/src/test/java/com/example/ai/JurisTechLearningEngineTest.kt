@@ -124,4 +124,45 @@ class JurisTechLearningEngineTest {
         assertTrue("Debe contener relaciones entre nodos", dualCoding.connections.isNotEmpty())
         assertTrue("Debe contener descripción accesible", dualCoding.accessibleTextDescription.isNotBlank())
     }
+
+    @Test
+    fun testTransformarEnLeccionMultimodal() = runBlocking {
+        val textoLargo = """
+            Artículo 1. Nadie puede ser sancionado por acciones u omisiones que no estén expresamente tipificadas como delito o falta en ley formal anterior a su perpetración.
+            
+            No se impondrá pena ni medida de seguridad que no se halle establecida previamente por la ley. La ley penal no tiene efecto retroactivo, salvo cuando favorezca al encausado o reo.
+            
+            Las medidas de seguridad sólo pueden aplicarse cuando concurran los presupuestos legalmente establecidos para personas en estado de inimputabilidad o peligrosidad criminal acreditada.
+        """.trimIndent()
+
+        val lesson = learningEngine.transformarEnLeccionMultimodal(
+            documentTitle = "Código Penal de Honduras",
+            fragmentoTexto = textoLargo,
+            pagina = 1
+        )
+
+        assertNotNull("La lección no debe ser nula", lesson)
+        assertEquals(1, lesson.sourcePage)
+        assertTrue("Debe contener al menos 2 secciones cortas y coherentes", lesson.sections.size >= 2)
+
+        for (section in lesson.sections) {
+            assertTrue("Cada sección debe tener título", section.title.isNotBlank())
+            assertTrue("Cada sección debe tener contenido corto", section.content.isNotBlank())
+            assertTrue("Debe tener resumen del concepto clave", section.keyConceptSummary.isNotBlank())
+            assertTrue("Debe tener descripción detallada de imagen o video", section.visualMediaDescription.isNotBlank())
+            assertTrue("Debe tener título conceptual visual", section.visualConceptTitle.isNotBlank())
+            assertTrue("Debe incluir ejercicios prácticos interactivos", section.exercises.isNotEmpty())
+            
+            val exercise = section.exercises.first()
+            assertTrue("El ejercicio debe tener pregunta", exercise.question.isNotBlank())
+            assertTrue("El ejercicio debe tener opciones de respuesta", exercise.options.size >= 2)
+            assertTrue("El índice correcto debe ser válido", exercise.correctIndex in exercise.options.indices)
+            assertTrue("El ejercicio debe tener explicación", exercise.explanation.isNotBlank())
+
+            assertTrue("Debe tener marcas de tiempo sincronizadas para voz", section.timedHighlights.isNotEmpty())
+            val firstHighlight = section.timedHighlights.first()
+            assertTrue("Marca de tiempo debe tener texto", firstHighlight.text.isNotBlank())
+            assertTrue("Duración debe ser positiva", firstHighlight.durationMs > 0L)
+        }
+    }
 }

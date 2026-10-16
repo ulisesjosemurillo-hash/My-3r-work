@@ -11,10 +11,23 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+
 class RecentDocumentRepository(
     private val dao: RecentDocumentDao,
-    val highlightDao: HighlightDao? = null
+    val highlightDao: HighlightDao? = null,
+    private val context: Context? = null
 ) {
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                dao.sanitizeOversizedRows()
+            } catch (_: Exception) {}
+        }
+    }
 
     val recentDocuments: Flow<List<RecentDocumentEntity>> = dao.getAllRecentDocuments()
 
@@ -34,9 +47,22 @@ class RecentDocumentRepository(
         bookmarksJson: String = "[]",
         audioCommentsJson: String = "[]",
         questionsHistoryJson: String = "[]",
-        positionHistoryJson: String = "[]"
+        positionHistoryJson: String = "[]",
+        author: String = "",
+        materia: String = "",
+        year: String = "",
+        collection: String = ""
     ) = withContext(Dispatchers.IO) {
-        val pagesJson = serializePages(pages)
+        val pagesJson = if (pages.size > 5) {
+            try {
+                savePagesToFile(id, pages)
+            } catch (_: Throwable) {
+                "file:pages_${id}.json"
+            }
+        } else {
+            serializePages(pages)
+        }
+
         val entity = RecentDocumentEntity(
             id = id,
             title = title,
@@ -55,7 +81,11 @@ class RecentDocumentRepository(
             bookmarksJson = bookmarksJson,
             audioCommentsJson = audioCommentsJson,
             questionsHistoryJson = questionsHistoryJson,
-            positionHistoryJson = positionHistoryJson
+            positionHistoryJson = positionHistoryJson,
+            author = author,
+            materia = materia,
+            year = year,
+            collection = collection
         )
         dao.insertOrUpdate(entity)
     }
@@ -189,32 +219,88 @@ class RecentDocumentRepository(
             }
 
             // In-text matches inside pages
-            val pages = parsePages(doc.pagesJson)
-            val fragments = SampleDocumentRepository.crearFragmentos(pages)
-
-            fragments.forEachIndexed { idx, frag ->
-                if (frag.texto.lowercase().contains(cleanQuery)) {
-                    // Extract snippet around match
-                    val lowerText = frag.texto.lowercase()
-                    val matchIndex = lowerText.indexOf(cleanQuery)
-                    val start = maxOf(0, matchIndex - 30)
-                    val end = minOf(frag.texto.length, matchIndex + cleanQuery.length + 50)
-                    val snippet = "..." + frag.texto.substring(start, end).trim() + "..."
-
-                    results.add(
-                        SearchResultItem(
-                            documentId = doc.id,
-                            documentTitle = doc.title,
-                            pageNumber = frag.pagina,
-                            fragmentIndex = idx,
-                            matchedSnippet = snippet,
-                            isTitleMatch = false
+            val hasOnDiskPages = if (context != null) {
+                com.example.util.DocumentPageStorage.getDocumentJsonFile(context, doc.id).exists()
+            } else false
+            if (context != null && hasOnDiskPages) {
+                var docMatchCount = 0
+                com.example.util.DocumentPageStorage.streamAllPages(context, doc.id) { pageNum, pageText ->
+                    if (docMatchCount < 10 && pageText.lowercase().contains(cleanQuery)) {
+                        val lowerText = pageText.lowercase()
+                        val matchIndex = lowerText.indexOf(cleanQuery)
+                        val start = maxOf(0, matchIndex - 30)
+                        val end = minOf(pageText.length, matchIndex + cleanQuery.length + 50)
+                        val snippet = "..." + pageText.substring(start, end).trim() + "..."
+                        results.add(
+                            SearchResultItem(
+                                documentId = doc.id,
+                                documentTitle = doc.title,
+                                pageNumber = pageNum,
+                                fragmentIndex = 0,
+                                matchedSnippet = snippet,
+                                isTitleMatch = false
+                            )
                         )
-                    )
+                        docMatchCount++
+                    }
+                }
+            } else {
+                val pages = parsePages(doc.pagesJson, doc.id)
+                val fragments = SampleDocumentRepository.crearFragmentos(pages)
+
+                fragments.forEachIndexed { idx, frag ->
+                    if (frag.texto.lowercase().contains(cleanQuery)) {
+                        val lowerText = frag.texto.lowercase()
+                        val matchIndex = lowerText.indexOf(cleanQuery)
+                        val start = maxOf(0, matchIndex - 30)
+                        val end = minOf(frag.texto.length, matchIndex + cleanQuery.length + 50)
+                        val snippet = "..." + frag.texto.substring(start, end).trim() + "..."
+
+                        results.add(
+                            SearchResultItem(
+                                documentId = doc.id,
+                                documentTitle = doc.title,
+                                pageNumber = frag.pagina,
+                                fragmentIndex = idx,
+                                matchedSnippet = snippet,
+                                isTitleMatch = false
+                            )
+                        )
+                    }
                 }
             }
         }
         results
+    }
+
+    private fun getPagesDirectory(): java.io.File {
+        val baseDir = context?.filesDir ?: java.io.File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+        return java.io.File(baseDir, "pages").apply { mkdirs() }
+    }
+
+    fun savePagesToFile(id: String, pages: List<DocumentPage>): String {
+        val dir = getPagesDirectory()
+        val file = java.io.File(dir, "pages_${id}.json")
+        // Si el archivo ya existe y tiene contenido completo extraído por el extractor, no sobreescribir con stubs
+        if (file.exists() && file.length() > 500L) {
+            return "file:${file.name}"
+        }
+        file.bufferedWriter(Charsets.UTF_8).use { writer ->
+            writer.write("[")
+            pages.forEachIndexed { index, page ->
+                if (index > 0) writer.write(",")
+                writer.write("{\"numero\":${page.numero},\"texto\":")
+                writer.write(JSONObject.quote(page.texto))
+                writer.write("}")
+
+                // Guardar también archivo individual si hay contexto disponible
+                if (context != null) {
+                    com.example.util.DocumentPageStorage.saveSinglePage(context, id, page.numero, page.texto)
+                }
+            }
+            writer.write("]")
+        }
+        return "file:${file.name}"
     }
 
     fun serializePages(pages: List<DocumentPage>): String {
@@ -228,7 +314,148 @@ class RecentDocumentRepository(
         return jsonArray.toString()
     }
 
-    fun parsePages(pagesJson: String): List<DocumentPage> {
+    fun parsePages(pagesJson: String, docId: String = ""): List<DocumentPage> {
+        if (pagesJson.startsWith("file:")) {
+            val fileName = pagesJson.removePrefix("file:")
+            val file = java.io.File(getPagesDirectory(), fileName)
+            if (file.exists()) {
+                val fromFile = readPagesFromFile(file)
+                if (fromFile.isNotEmpty()) return fromFile
+            }
+        }
+        if (docId.isNotBlank()) {
+            val file = java.io.File(getPagesDirectory(), "pages_${docId}.json")
+            if (file.exists()) {
+                val fromFile = readPagesFromFile(file)
+                if (fromFile.isNotEmpty()) return fromFile
+            }
+        }
+        return parsePagesFromJsonString(pagesJson)
+    }
+
+    suspend fun loadPageWindow(docId: String, targetPage: Int, windowRadius: Int = 25): List<DocumentPage> {
+        if (context != null) {
+            val start = (targetPage - windowRadius).coerceAtLeast(1)
+            val end = targetPage + windowRadius
+            val window = com.example.util.DocumentPageStorage.readPageWindow(context, docId, start, end)
+            if (window.isNotEmpty()) return window
+        }
+        val file = java.io.File(getPagesDirectory(), "pages_${docId}.json")
+        if (file.exists()) {
+            val start = (targetPage - windowRadius).coerceAtLeast(1)
+            val end = targetPage + windowRadius
+            return readSpecificWindowFromFile(file, start, end)
+        }
+        return emptyList()
+    }
+
+    fun getPageText(docId: String, pageNumber: Int): String {
+        if (context != null) {
+            val txt = com.example.util.DocumentPageStorage.readSinglePage(context, docId, pageNumber)
+            if (txt != null) return txt
+        }
+        val file = java.io.File(getPagesDirectory(), "pages_${docId}.json")
+        if (file.exists()) {
+            val list = readSpecificWindowFromFile(file, pageNumber, pageNumber)
+            return list.firstOrNull()?.texto ?: ""
+        }
+        return ""
+    }
+
+    /**
+     * Lee un archivo JSON de páginas en modo streaming con JsonReader,
+     * evitando desbordamiento de memoria (OOM) en documentos de 1,720+ páginas.
+     * Para documentos extensos (> 80 páginas), mantiene texto completo en la ventana inicial
+     * y vistas previas ligeras en el resto para que la lista y selector funcionen sin consumir RAM.
+     */
+    private fun readPagesFromFile(file: java.io.File): List<DocumentPage> {
+        val result = mutableListOf<DocumentPage>()
+        try {
+            android.util.JsonReader(file.bufferedReader(Charsets.UTF_8)).use { reader ->
+                reader.beginArray()
+                var count = 0
+                while (reader.hasNext()) {
+                    var pageNum = 0
+                    var pageText = ""
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "numero" -> pageNum = reader.nextInt()
+                            "texto" -> pageText = reader.nextString()
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                    count++
+                    val memoryText = if (count <= 50) pageText else pageText.take(60)
+                    result.add(DocumentPage(numero = pageNum, texto = memoryText))
+                }
+                reader.endArray()
+            }
+        } catch (_: Throwable) {
+            // Respaldo en caso de formato alternativo
+            return parsePagesLegacy(file)
+        }
+        return result
+    }
+
+    private fun readSpecificWindowFromFile(file: java.io.File, startPage: Int, endPage: Int): List<DocumentPage> {
+        val result = mutableListOf<DocumentPage>()
+        try {
+            android.util.JsonReader(file.bufferedReader(Charsets.UTF_8)).use { reader ->
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    var pageNum = 0
+                    var pageText = ""
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "numero" -> pageNum = reader.nextInt()
+                            "texto" -> {
+                                if (pageNum in startPage..endPage) {
+                                    pageText = reader.nextString()
+                                } else {
+                                    reader.skipValue()
+                                }
+                            }
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                    if (pageNum in startPage..endPage && pageText.isNotEmpty()) {
+                        result.add(DocumentPage(numero = pageNum, texto = pageText))
+                    }
+                    if (pageNum > endPage && result.size >= (endPage - startPage + 1)) {
+                        break
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return result
+    }
+
+    private fun parsePagesLegacy(file: java.io.File): List<DocumentPage> {
+        val result = mutableListOf<DocumentPage>()
+        try {
+            file.bufferedReader(Charsets.UTF_8).use { reader ->
+                val content = reader.readText()
+                val arr = JSONArray(content)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    result.add(
+                        DocumentPage(
+                            numero = obj.optInt("numero", i + 1),
+                            texto = obj.optString("texto", "").take(60)
+                        )
+                    )
+                }
+            }
+        } catch (_: Throwable) {}
+        return result
+    }
+
+    private fun parsePagesFromJsonString(pagesJson: String): List<DocumentPage> {
+        if (pagesJson.isBlank() || pagesJson.startsWith("file:")) return emptyList()
         val result = mutableListOf<DocumentPage>()
         try {
             val arr = JSONArray(pagesJson)
@@ -241,9 +468,7 @@ class RecentDocumentRepository(
                     )
                 )
             }
-        } catch (e: Exception) {
-            // fallback
-        }
+        } catch (_: Throwable) {}
         return result
     }
 

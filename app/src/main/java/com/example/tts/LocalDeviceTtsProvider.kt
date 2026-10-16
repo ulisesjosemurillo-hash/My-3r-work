@@ -10,8 +10,9 @@ import android.util.Log
 import java.util.Locale
 
 /**
- * Proveedor de voz local en el dispositivo (100% offline).
- * Utiliza el motor nativo de Android TextToSpeech garantizando funcionamiento sin conexión.
+ * Proveedor de voz local en el dispositivo (100% offline sin internet).
+ * Utiliza el motor nativo de Android TextToSpeech garantizando funcionamiento sin conexión
+ * y adaptando la entonación para Hombre o Mujer.
  */
 class LocalDeviceTtsProvider(
     private val context: Context
@@ -21,8 +22,9 @@ class LocalDeviceTtsProvider(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var isReady = false
-    private var currentRate = 0.95f
-    private var currentPitch = 1.0f
+    private var userRate = 0.95f
+    private var userPitch = 1.0f
+    private var currentGender: VoiceGender = VoiceGender.MUJER
     private var pendingInitCallback: ((Boolean) -> Unit)? = null
 
     // Callbacks activos para fragmentos
@@ -30,7 +32,7 @@ class LocalDeviceTtsProvider(
     private var activeOnDone: ((Int) -> Unit)? = null
     private var activeOnError: ((Int, String) -> Unit)? = null
 
-    override val name: String = "Motor Local del Dispositivo (Offline)"
+    override val name: String = "Motor Local del Dispositivo (Offline sin internet)"
     override val isOnline: Boolean = false
     override val isAvailable: Boolean get() = isReady
 
@@ -56,8 +58,7 @@ class LocalDeviceTtsProvider(
                 engine.setLanguage(Locale.getDefault())
             }
 
-            engine.setSpeechRate(currentRate)
-            engine.setPitch(currentPitch)
+            applyVoiceGender(currentGender)
 
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
@@ -93,38 +94,84 @@ class LocalDeviceTtsProvider(
         }
     }
 
-    override fun getAvailableVoices(): List<VoiceProfile> {
-        val engine = tts ?: return emptyList()
-        return try {
-            val voices = engine.voices ?: return emptyList()
-            voices.filter {
-                // Filtrar voces que no requieran conexión de red estricta
+    override fun setVoiceGender(gender: VoiceGender) {
+        currentGender = gender
+        if (isReady && tts != null) {
+            applyVoiceGender(gender)
+        }
+    }
+
+    private fun applyVoiceGender(gender: VoiceGender) {
+        val engine = tts ?: return
+        try {
+            val voices = engine.voices ?: emptySet()
+            // Filtrar únicamente voces locales sin conexión en español
+            val localSpanishVoices = voices.filter {
                 !it.isNetworkConnectionRequired && it.locale.language.startsWith("es", ignoreCase = true)
-            }.map { voice ->
-                VoiceProfile(
-                    id = voice.name,
-                    name = formatVoiceName(voice),
-                    locale = voice.locale.toLanguageTag(),
-                    isNetworkRequired = false,
-                    isNatural = false,
-                    quality = if (voice.quality >= Voice.QUALITY_HIGH) "Alta Calidad Local" else "Estándar Local"
-                )
-            }.ifEmpty {
-                // Si no hay específicas de español offline explícitas, listar las del sistema
-                voices.filter { !it.isNetworkConnectionRequired }.take(5).map {
-                    VoiceProfile(
-                        id = it.name,
-                        name = "Voz Local (${it.locale.displayLanguage})",
-                        locale = it.locale.toLanguageTag(),
-                        isNetworkRequired = false,
-                        isNatural = false,
-                        quality = "Local"
-                    )
+            }
+
+            val targetVoice: Voice? = when (gender) {
+                VoiceGender.HOMBRE -> {
+                    localSpanishVoices.firstOrNull { voice ->
+                        val n = voice.name.lowercase()
+                        n.contains("male") || n.contains("hombre") || n.contains("masc") ||
+                                n.contains("eed") || n.contains("eee") || n.contains("esd")
+                    } ?: localSpanishVoices.firstOrNull()
+                }
+                VoiceGender.MUJER -> {
+                    localSpanishVoices.firstOrNull { voice ->
+                        val n = voice.name.lowercase()
+                        n.contains("female") || n.contains("mujer") || n.contains("fem") ||
+                                n.contains("eea") || n.contains("ana") || n.contains("sfb")
+                    } ?: localSpanishVoices.firstOrNull()
                 }
             }
+
+            if (targetVoice != null) {
+                engine.voice = targetVoice
+            }
+
+            // Calibración acústica para voz local offline:
+            // Hombre: tono más grave (0.85f)
+            // Mujer: tono más agudo/claro (1.15f)
+            val effectivePitch = when (gender) {
+                VoiceGender.HOMBRE -> userPitch * 0.85f
+                VoiceGender.MUJER -> userPitch * 1.15f
+            }
+            val effectiveRate = when (gender) {
+                VoiceGender.HOMBRE -> userRate * 0.95f
+                VoiceGender.MUJER -> userRate * 0.98f
+            }
+
+            engine.setPitch(effectivePitch)
+            engine.setSpeechRate(effectiveRate)
         } catch (e: Exception) {
-            emptyList()
+            Log.e(tag, "Error aplicando género de voz local", e)
         }
+    }
+
+    override fun getAvailableVoices(): List<VoiceProfile> {
+        // Exclusivamente las dos opciones requeridas por el usuario
+        return listOf(
+            VoiceProfile(
+                id = VoiceGender.HOMBRE.id,
+                name = VoiceGender.HOMBRE.displayName,
+                locale = "es-ES",
+                isNetworkRequired = false,
+                isNatural = false,
+                quality = "Local Offline",
+                gender = VoiceGender.HOMBRE
+            ),
+            VoiceProfile(
+                id = VoiceGender.MUJER.id,
+                name = VoiceGender.MUJER.displayName,
+                locale = "es-ES",
+                isNetworkRequired = false,
+                isNatural = false,
+                quality = "Local Offline",
+                gender = VoiceGender.MUJER
+            )
+        )
     }
 
     fun hasSpanishVoicesInstalled(): Boolean {
@@ -146,25 +193,18 @@ class LocalDeviceTtsProvider(
     }
 
     override fun setVoice(voiceId: String) {
-        val engine = tts ?: return
-        try {
-            val target = engine.voices?.firstOrNull { it.name == voiceId }
-            if (target != null) {
-                engine.voice = target
-            }
-        } catch (e: Exception) {
-            Log.e(tag, "Error asignando voz local: $voiceId", e)
-        }
+        val gender = VoiceGender.fromId(voiceId)
+        setVoiceGender(gender)
     }
 
     override fun setSpeechRate(rate: Float) {
-        currentRate = rate
-        tts?.setSpeechRate(rate)
+        userRate = rate
+        applyVoiceGender(currentGender)
     }
 
     override fun setPitch(pitch: Float) {
-        currentPitch = pitch
-        tts?.setPitch(pitch)
+        userPitch = pitch
+        applyVoiceGender(currentGender)
     }
 
     override fun speakFragment(
@@ -185,8 +225,7 @@ class LocalDeviceTtsProvider(
         activeOnError = onError
 
         try {
-            engine.setSpeechRate(currentRate)
-            engine.setPitch(currentPitch)
+            applyVoiceGender(currentGender)
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, fragmentId.toString())
         } catch (e: Exception) {
             Log.e(tag, "Error hablando fragmento $fragmentId con TTS local", e)
@@ -211,11 +250,5 @@ class LocalDeviceTtsProvider(
         }
         isReady = false
         tts = null
-    }
-
-    private fun formatVoiceName(voice: Voice): String {
-        val loc = voice.locale
-        val country = if (loc.displayCountry.isNotBlank()) " (${loc.displayCountry})" else ""
-        return "Voz Local ${loc.displayLanguage}$country"
     }
 }

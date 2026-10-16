@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +76,19 @@ fun JurisTechLibraryScreen(
 
     Scaffold(
         containerColor = JtBackground,
+        floatingActionButton = {
+            if (uiState.currentTab == 0) {
+                ExtendedFloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    icon = { Icon(Icons.Default.Add, contentDescription = "Añadir libro") },
+                    text = { Text("Añadir Libro", fontWeight = FontWeight.Bold) },
+                    containerColor = JtGreenPrimary,
+                    contentColor = Color.White,
+                    modifier = Modifier.testTag("fab_add_book")
+                )
+            }
+        },
+        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             NavigationBar(
                 containerColor = JtBackground,
@@ -173,38 +187,61 @@ fun JurisTechLibraryScreen(
             onDismissRequest = { showAddDialog = false },
             title = {
                 Text(
-                    "Añadir a la Biblioteca",
+                    "Añadir Libros a la Biblioteca",
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Serif,
                     color = JtPrimaryText
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Selecciona cómo deseas incorporar un nuevo texto legal:",
+                        "Selecciona cómo deseas incorporar más libros y textos legales:",
                         color = JtSecondaryText,
-                        fontSize = 14.sp
+                        fontSize = 13.sp
                     )
 
+                    // 1. Instalar Colección Completa
+                    FilledTonalButton(
+                        onClick = {
+                            viewModel.agregarTodosLosLibrosDelCatalogo()
+                            showAddDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = JtGreenPrimary.copy(alpha = 0.15f),
+                            contentColor = JtGreenPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.LibraryAdd, contentDescription = null, tint = JtGreenPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Añadir Colección Completa (10 Libros)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Instala todos los códigos: Penal, Civil, Comercio, Tránsito, Trabajo...", color = JtSecondaryText, fontSize = 11.sp)
+                        }
+                    }
+
+                    // 2. Explorar Catálogo de Libros
                     OutlinedButton(
                         onClick = {
                             showAddDialog = false
-                            onAddFromFile()
+                            showCatalogDialog = true
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = JtPrimaryText),
                         border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null, tint = JtGreenPrimary)
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Icon(Icons.Default.MenuBook, contentDescription = null, tint = JtGreenPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Importar PDF, Word (.docx) o TXT", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Carga libros, leyes y documentos desde la memoria", color = JtSecondaryText, fontSize = 11.sp)
+                            Text("Explorar Catálogo de Libros y Leyes", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Elige y añade libros individualmente a tu estante", color = JtSecondaryText, fontSize = 11.sp)
                         }
                     }
 
+                    // 3. Crear Libro con Plantilla o Escribir
                     OutlinedButton(
                         onClick = {
                             showAddDialog = false
@@ -216,28 +253,29 @@ fun JurisTechLibraryScreen(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Default.EditNote, contentDescription = null, tint = JtGreenPrimary)
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Escribir o pegar texto legal", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Copia artículos, contratos o decretos", color = JtSecondaryText, fontSize = 11.sp)
+                            Text("Crear Libro con Plantilla o Texto", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Redacta un nuevo libro o usa plantillas prediseñadas", color = JtSecondaryText, fontSize = 11.sp)
                         }
                     }
 
+                    // 4. Importar Archivo
                     OutlinedButton(
                         onClick = {
                             showAddDialog = false
-                            showCatalogDialog = true
+                            onAddFromFile()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = JtPrimaryText),
                         border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.AccountBalance, contentDescription = null, tint = JtGreenPrimary)
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Icon(Icons.Default.UploadFile, contentDescription = null, tint = JtGreenPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Catálogo de Leyes de Honduras", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Constitución, Código Penal, Tránsito...", color = JtSecondaryText, fontSize = 11.sp)
+                            Text("Importar PDF, Word (.docx) o TXT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Carga archivos almacenados en la memoria del dispositivo", color = JtSecondaryText, fontSize = 11.sp)
                         }
                     }
                 }
@@ -252,56 +290,181 @@ fun JurisTechLibraryScreen(
         )
     }
 
-    // Modal Escribir / Pegar Texto
+    // Modal Escribir / Crear Nuevo Libro
     if (showPasteTextDialog) {
         var pasteTitle by remember { mutableStateOf("") }
+        var pasteAuthor by remember { mutableStateOf("JurisTech / Autor") }
+        var pasteMateria by remember { mutableStateOf("Derecho General") }
         var pasteContent by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { showPasteTextDialog = false },
             title = {
-                Text("Nuevo Documento Legal", fontWeight = FontWeight.Bold, color = JtPrimaryText)
+                Text("Crear o Añadir Nuevo Libro", fontWeight = FontWeight.Bold, color = JtPrimaryText)
             },
             text = {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 440.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    Text(
+                        "Plantillas rápidas:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = JtSecondaryText
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AssistChip(
+                            onClick = {
+                                pasteTitle = "Manual de Procedimientos y Juicios Orales"
+                                pasteAuthor = "Dr. Roberto Mendoza"
+                                pasteMateria = "Derecho Procesal Penal"
+                                pasteContent = """CAPÍTULO I: TEORÍA DEL CASO Y LITIGACIÓN ORAL
+
+ARTÍCULO 1.- La Teoría del Caso es el instrumento metodológico fundamental que estructura la hipótesis fáctica, jurídica y probatoria que la parte sostiene ante el tribunal de sentencia.
+
+ARTÍCULO 2.- Elementos Estructurales:
+1. Elemento Fáctico: Reconstrucción circunstanciada de los hechos relevantes acaecidos en tiempo, modo y lugar.
+2. Elemento Jurídico: Encuadre dogmático de la conducta en los tipos penales y normas procesales aplicables.
+3. Elemento Probatorio: Conjunto de medios probatorios idóneos, lícitos y pertinentes que sustentan cada afirmación de hecho.
+
+CAPÍTULO II: TÉCNICAS DE INTERROGATORIO Y CONTRAINTERROGATORIO
+
+ARTÍCULO 10.- El interrogatorio directo tiene como objetivo presentar el testimonio de los testigos propios de forma clara, ordenada y convincente, utilizando preguntas abiertas que permitan el relato fluido del declarante.
+
+ARTÍCULO 15.- El contrainterrogatorio busca confrontar y poner a prueba la credibilidad del testigo adverso, empleando preguntas cerradas y sugestivas orientadas a evidenciar contradicciones, inconsistencias o falta de percepción directa."""
+                            },
+                            label = { Text("Manual Procesal", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.AutoStories, contentDescription = null, modifier = Modifier.size(13.dp)) }
+                        )
+
+                        AssistChip(
+                            onClick = {
+                                pasteTitle = "Compendio de Derecho Civil y Contratos"
+                                pasteAuthor = "Academia Jurídica"
+                                pasteMateria = "Derecho Civil"
+                                pasteContent = """TÍTULO I: DE LAS OBLIGACIONES Y RESPONSABILIDAD CIVIL
+
+ARTÍCULO 1.- Principio de Autonomía de la Voluntad. Los particulares pueden estipular las cláusulas y condiciones que tengan por convenientes, siempre que no sean contrarias a las leyes, a la moral ni al orden público.
+
+ARTÍCULO 2.- La Responsabilidad Civil Contractual y Extracontractual. Todo aquel que por acción u omisión cause daño a otro, interviniendo culpa o negligencia, está obligado a reparar el daño causado (principio neminem laedere).
+
+TÍTULO II: DE LOS CONTRATOS TRASLATIVOS DE DOMINIO
+
+ARTÍCULO 20.- Por el contrato de compraventa uno de los contratantes se obliga a entregar una cosa determinada y el otro a pagar por ella un precio cierto, en dinero o signo que lo represente."""
+                            },
+                            label = { Text("Contratos Civiles", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(13.dp)) }
+                        )
+
+                        AssistChip(
+                            onClick = {
+                                pasteTitle = "Tratado de Amparo y Garantías"
+                                pasteAuthor = "Corte Suprema"
+                                pasteMateria = "Derecho Constitucional"
+                                pasteContent = """TÍTULO I: DE LA ACCIÓN DE AMPARO CONSTITUCIONAL
+
+ARTÍCULO 1.- Naturaleza Jurídica. La Acción de Amparo es la garantía jurisdiccional de rango constitucional destinada a restablecer el goce de los derechos fundamentales conculcados o amenazados por actos u omisiones de cualquier autoridad o particular.
+
+ARTÍCULO 5.- Requisitos de Procedibilidad:
+a) Legitimación activa del agraviado;
+b) Existencia de un acto lesivo de autoridad;
+c) Agotamiento oportuno de los recursos ordinarios (principio de definitividad); y,
+d) Presentación en el plazo perentorio de ley."""
+                            },
+                            label = { Text("Amparo Const.", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.Gavel, contentDescription = null, modifier = Modifier.size(13.dp)) }
+                        )
+                    }
+
                     OutlinedTextField(
                         value = pasteTitle,
                         onValueChange = { pasteTitle = it },
-                        label = { Text("Título del libro / ley") },
-                        placeholder = { Text("Ej. Ley Especial de Ciberseguridad") },
+                        label = { Text("Título del libro / texto") },
+                        placeholder = { Text("Ej. Código de Ética Judicial") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = pasteAuthor,
+                            onValueChange = { pasteAuthor = it },
+                            label = { Text("Autor") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = pasteMateria,
+                            onValueChange = { pasteMateria = it },
+                            label = { Text("Materia") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+
                     OutlinedTextField(
                         value = pasteContent,
                         onValueChange = { pasteContent = it },
-                        label = { Text("Texto legal o artículos") },
-                        placeholder = { Text("Pega aquí los artículos o contenido...") },
+                        label = { Text("Contenido del libro (artículos / capítulos)") },
+                        placeholder = { Text("Escribe o pega aquí el contenido...") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp)
+                            .height(160.dp)
                     )
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        if (pasteTitle.isNotBlank() && pasteContent.isNotBlank()) {
-                            viewModel.procesarTextoImportado(pasteTitle.trim(), pasteContent.trim())
-                            showPasteTextDialog = false
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
-                    enabled = pasteTitle.isNotBlank() && pasteContent.isNotBlank()
-                ) {
-                    Text("Guardar en Biblioteca", color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            if (pasteTitle.isNotBlank() && pasteContent.isNotBlank()) {
+                                viewModel.crearNuevoLibroPersonalizado(
+                                    titulo = pasteTitle.trim(),
+                                    autor = pasteAuthor.trim(),
+                                    materia = pasteMateria.trim(),
+                                    contenido = pasteContent.trim(),
+                                    abrirAhora = false
+                                )
+                                showPasteTextDialog = false
+                            }
+                        },
+                        enabled = pasteTitle.isNotBlank() && pasteContent.isNotBlank()
+                    ) {
+                        Text("Añadir al Estante")
+                    }
+
+                    Button(
+                        onClick = {
+                            if (pasteTitle.isNotBlank() && pasteContent.isNotBlank()) {
+                                viewModel.crearNuevoLibroPersonalizado(
+                                    titulo = pasteTitle.trim(),
+                                    autor = pasteAuthor.trim(),
+                                    materia = pasteMateria.trim(),
+                                    contenido = pasteContent.trim(),
+                                    abrirAhora = true
+                                )
+                                showPasteTextDialog = false
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
+                        enabled = pasteTitle.isNotBlank() && pasteContent.isNotBlank()
+                    ) {
+                        Text("Añadir y Leer", color = Color.White)
+                    }
                 }
             },
             dismissButton = {
@@ -313,41 +476,206 @@ fun JurisTechLibraryScreen(
         )
     }
 
-    // Modal Catálogo Códigos de Honduras
+    // Modal Catálogo Completo de Libros y Leyes
     if (showCatalogDialog) {
+        val existingTitles = remember(uiState.recentDocuments) {
+            uiState.recentDocuments.map { it.title.trim().lowercase() }.toSet()
+        }
+
         AlertDialog(
             onDismissRequest = { showCatalogDialog = false },
             title = {
-                Text("Leyes de la República de Honduras", fontWeight = FontWeight.Bold, color = JtPrimaryText)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            "Catálogo de Libros Jurídicos",
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Serif,
+                            color = JtPrimaryText,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            "${SampleDocumentRepository.hondurasSamples.size} libros disponibles",
+                            fontSize = 12.sp,
+                            color = JtSecondaryText
+                        )
+                    }
+                }
             },
             text = {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 380.dp)
+                        .heightIn(max = 440.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Botón para añadir toda la colección
+                    FilledTonalButton(
+                        onClick = {
+                            viewModel.agregarTodosLosLibrosDelCatalogo()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = JtGreenPrimary.copy(alpha = 0.12f),
+                            contentColor = JtGreenPrimary
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.LibraryAddCheck, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("📥 Añadir Colección Completa (Todos)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
                     SampleDocumentRepository.hondurasSamples.forEach { sample ->
+                        val isAlreadyAdded = existingTitles.contains(sample.title.trim().lowercase())
+
                         Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.cargarSample(sample)
-                                    showCatalogDialog = false
-                                },
+                            modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = JtBackground),
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isAlreadyAdded) JtGreenPrimary.copy(alpha = 0.4f) else JtBorder
+                            )
                         ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.MenuBook, contentDescription = null, tint = JtGreenPrimary)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(sample.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = JtPrimaryText)
-                                    Text(sample.subtitle, fontSize = 12.sp, color = JtSecondaryText)
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Top,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Surface(
+                                            color = if (sample.coverColor != null) Color(sample.coverColor) else JtGreenPrimary,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    Icons.Default.MenuBook,
+                                                    contentDescription = null,
+                                                    tint = JtGold,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(10.dp))
+
+                                        Column {
+                                            Text(
+                                                text = sample.title,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = JtPrimaryText
+                                            )
+                                            Text(
+                                                text = sample.subtitle,
+                                                fontSize = 11.sp,
+                                                color = JtSecondaryText,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+
+                                            Spacer(modifier = Modifier.height(4.dp))
+
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Surface(
+                                                    color = JtSurface,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = sample.materia,
+                                                        fontSize = 10.sp,
+                                                        color = JtGreenPrimary,
+                                                        fontWeight = FontWeight.Medium,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                                if (sample.year.isNotBlank()) {
+                                                    Surface(
+                                                        color = JtSurface,
+                                                        shape = RoundedCornerShape(4.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = sample.year,
+                                                            fontSize = 10.sp,
+                                                            color = JtSecondaryText,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (isAlreadyAdded) {
+                                        Surface(
+                                            color = JtGreenPrimary.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text(
+                                                text = "✓ En biblioteca",
+                                                color = JtGreenPrimary,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Botones de acción del libro
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (!isAlreadyAdded) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                viewModel.agregarLibroALaBiblioteca(sample, abrirAhora = false)
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = JtGreenPrimary),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, JtGreenPrimary),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(34.dp)
+                                        ) {
+                                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Añadir a mi biblioteca", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            viewModel.cargarSample(sample)
+                                            showCatalogDialog = false
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(34.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Leer ahora", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
@@ -764,11 +1092,12 @@ private fun EmptyLibraryView(onAddDocument: () -> Unit) {
         Button(
             onClick = onAddDocument,
             colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
-            shape = RoundedCornerShape(24.dp)
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.height(48.dp)
         ) {
             Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Añadir documento", color = Color.White)
+            Text("Añadir Libro o Código", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
     }
 }
@@ -814,23 +1143,104 @@ private fun FilledLibraryView(
     val pagerState = rememberPagerState(pageCount = { actualDocs.size })
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 76.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        Text("JurisTech Legal Reader", color = JtSecondaryText, fontSize = 13.sp, letterSpacing = 1.sp)
-        Spacer(modifier = Modifier.height(2.dp))
+        // Barra superior con título y botón de Añadir libro
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("JurisTech Legal Reader", color = JtSecondaryText, fontSize = 12.sp, letterSpacing = 1.sp)
+                Text(
+                    text = "JurisTech",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Serif,
+                    color = JtPrimaryText
+                )
+            }
 
-        Text(
-            text = "JurisTech",
-            fontSize = 36.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Serif,
-            color = JtPrimaryText
-        )
+            Button(
+                onClick = onAddDocument,
+                colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.testTag("top_add_book_button")
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    "Añadir libro",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        // Banner de notificación de biblioteca (e.g. Libro añadido con éxito)
+        uiState.libraryFeedbackMessage?.let { msg ->
+            Surface(
+                color = JtGreenPrimary.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, JtGreenPrimary.copy(alpha = 0.5f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = JtGreenPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = msg,
+                            color = JtPrimaryText,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    IconButton(
+                        onClick = { viewModel.clearLibraryFeedbackMessage() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = JtSecondaryText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
 
         // Banner de Repaso Espaciado si hay conceptos pendientes hoy
         if (uiState.dueCardsCount > 0) {
@@ -916,6 +1326,13 @@ private fun FilledLibraryView(
                     label = { Text("+ Colección", fontSize = 12.sp) },
                     leadingIcon = { Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(14.dp)) }
                 )
+
+                // Botón rápido para añadir libro
+                AssistChip(
+                    onClick = onAddDocument,
+                    label = { Text("+ Añadir Libro", fontSize = 12.sp, color = JtGreenPrimary, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(14.dp)) }
+                )
             }
 
             // Menú de ordenamiento
@@ -974,13 +1391,13 @@ private fun FilledLibraryView(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(250.dp),
+                .height(210.dp),
             contentAlignment = Alignment.Center
         ) {
             HorizontalPager(
                 state = pagerState,
-                contentPadding = PaddingValues(horizontal = 90.dp),
-                pageSpacing = 16.dp,
+                contentPadding = PaddingValues(horizontal = 96.dp),
+                pageSpacing = 14.dp,
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val doc = actualDocs[page]
@@ -995,7 +1412,7 @@ private fun FilledLibraryView(
                             scaleY = scale
                         }
                         .fillMaxHeight()
-                        .width(180.dp)
+                        .width(150.dp)
                         .clickable {
                             if (isCenter) {
                                 onSelectDocument(doc)
@@ -1154,39 +1571,49 @@ private fun FilledLibraryView(
             trackColor = JtBorder
         )
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Botones de acción principales
-        Button(
-            onClick = { onSelectDocument(currentDoc) },
-            colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
-            shape = RoundedCornerShape(24.dp),
+        // Botones de acción principales: Leer ahora y Añadir libro
+        Row(
             modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .height(50.dp)
+                .fillMaxWidth(0.88f)
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Continuar leyendo", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Button(
+                onClick = { onSelectDocument(currentDoc) },
+                colors = ButtonDefaults.buttonColors(containerColor = JtGreenPrimary),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1.2f)
+                    .height(48.dp)
+                    .testTag("continue_reading_button")
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Leer ahora", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            FilledTonalButton(
+                onClick = onAddDocument,
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = JtGreenPrimary.copy(alpha = 0.15f),
+                    contentColor = JtGreenPrimary
+                ),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("shelf_add_book_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = JtGreenPrimary, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Añadir libro", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedButton(
-            onClick = onAddDocument,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = JtPrimaryText),
-            border = androidx.compose.foundation.BorderStroke(1.dp, JtBorder),
-            shape = RoundedCornerShape(24.dp),
-            modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .height(48.dp)
-        ) {
-            Icon(Icons.Default.Add, contentDescription = null, tint = JtPrimaryText)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Añadir documento", fontSize = 14.sp)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -1648,39 +2075,141 @@ private fun LibrarySettingsContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = JtGreenPrimary)
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("Motor de Voz (TTS)", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = JtPrimaryText)
+                    Column {
+                        Text("Motor de Voz (TTS)", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = JtPrimaryText)
+                        Text("Solo dos opciones: Voz de Hombre y Voz de Mujer", fontSize = 12.sp, color = JtSecondaryText)
+                    }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Voz activa: ${if (uiState.activeTtsVoice.isNotBlank()) uiState.activeTtsVoice else "Predeterminada del sistema"}", color = JtSecondaryText, fontSize = 13.sp)
+                Spacer(modifier = Modifier.height(14.dp))
 
-                if (uiState.availableTtsVoices.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Cambiar voz en español:", fontWeight = FontWeight.Medium, fontSize = 12.sp, color = JtPrimaryText)
-                    Spacer(modifier = Modifier.height(4.dp))
+                // Estado de Inteligencia Artificial / Modo de Conexión
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (uiState.isNetworkAvailable) JtGreenPrimary.copy(alpha = 0.12f) else JtGold.copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.isNetworkAvailable) Icons.Default.AutoAwesome else Icons.Default.WifiOff,
+                            contentDescription = null,
+                            tint = if (uiState.isNetworkAvailable) JtGreenPrimary else JtGold,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (uiState.isNetworkAvailable) {
+                                "En línea: Voces con Inteligencia Artificial activas (entonación y prosodia humana natural)."
+                            } else {
+                                "Sin internet: Modo Offline activo (voces locales del dispositivo sin conexión garantizadas)."
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (uiState.isNetworkAvailable) JtGreenPrimary else JtGold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Las dos opciones exclusivas: Voz de Hombre y Voz de Mujer
+                listOf(
+                    com.example.tts.VoiceGender.HOMBRE,
+                    com.example.tts.VoiceGender.MUJER
+                ).forEach { gender ->
+                    val isSelected = uiState.selectedVoiceGender == gender
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSelected) JtGreenPrimary.copy(alpha = 0.1f) else Color.Transparent,
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) JtGreenPrimary else JtBorder
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            .padding(vertical = 4.dp)
+                            .clickable { viewModel.setVoiceGender(gender) }
                     ) {
-                        uiState.availableTtsVoices.forEach { voice ->
-                            val selected = uiState.activeTtsVoice == voice
-                            FilterChip(
-                                selected = selected,
-                                onClick = { viewModel.setTtsVoice(voice) },
-                                label = { Text(voice.takeLast(14), fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = JtGreenPrimary,
-                                    selectedLabelColor = Color.White
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { viewModel.setVoiceGender(gender) },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = JtGreenPrimary
+                                    )
                                 )
-                            )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = gender.displayName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = JtPrimaryText
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = if (uiState.isNetworkAvailable) JtGreenPrimary else JtSecondaryText
+                                        ) {
+                                            Text(
+                                                text = if (uiState.isNetworkAvailable) "IA Natural" else "Offline",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (gender == com.example.tts.VoiceGender.HOMBRE) {
+                                            "Entonación masculina natural, timbre barítono claro y pausado"
+                                        } else {
+                                            "Entonación femenina natural, timbre cálido, expresivo y fluido"
+                                        },
+                                        fontSize = 12.sp,
+                                        color = JtSecondaryText
+                                    )
+                                }
+                            }
+
+                            // Botón de muestra de audio interactivo
+                            OutlinedButton(
+                                onClick = { viewModel.previewVoice(gender) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = if (isSelected) JtGreenPrimary else JtPrimaryText
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = "Escuchar muestra",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Escuchar", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("Idioma: Español (es-ES / es-HN)", color = JtSecondaryText, fontSize = 13.sp)
-                Text("Modo Offline: Sí, disponible sin internet", color = JtGreenPrimary, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Idioma: Español (es-ES / es-HN)", color = JtSecondaryText, fontSize = 12.sp)
+                Text("Ambas opciones funcionan con IA cuando hay internet y en offline cuando no hay internet.", color = JtSecondaryText, fontSize = 11.sp)
             }
         }
 

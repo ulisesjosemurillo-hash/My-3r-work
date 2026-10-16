@@ -73,7 +73,9 @@ class JurisTechAiService {
         documentTitle: String,
         paginas: List<DocumentPage>,
         paginaActual: Int,
-        historialConversacion: List<ChatMessage>
+        historialConversacion: List<ChatMessage>,
+        context: android.content.Context? = null,
+        documentId: String = ""
     ): String = withContext(Dispatchers.Default) {
         
         val currentRawTerms = extraerTerminos(pregunta)
@@ -94,7 +96,7 @@ class JurisTechAiService {
         }
 
         if (searchTermsRaw.isEmpty()) {
-            return@withContext "No encontré información suficiente para responder esta pregunta dentro del documento."
+            return@withContext "No encuentro información suficiente sobre eso en el documento cargado."
         }
 
         // COBERTURA DE CONCEPTOS (Protección Estricta Antifalsos Positivos)
@@ -114,8 +116,8 @@ class JurisTechAiService {
 
         val preguntaCompletaLower = pregunta.lowercase().replace(Regex("[¿?¡!]"), "").trim()
 
-        paginas.forEach { pagina ->
-            val bloques = pagina.texto.split(Regex("\\n\\n|\\.\\s+")).filter { it.trim().length > 20 }
+        val processPageBlock: (pageNum: Int, pageText: String) -> Unit = { pageNum, pageText ->
+            val bloques = pageText.split(Regex("\\n\\n|\\.\\s+")).filter { it.trim().length > 20 }
             
             for (bloque in bloques) {
                 val bloqueLimpio = bloque.trim()
@@ -159,15 +161,35 @@ class JurisTechAiService {
                     score += 15.0
                 }
 
-                if (pagina.numero == paginaActual && score > 0) {
+                if (pageNum == paginaActual && score > 0) {
                     score += 2.0
-                } else if (Math.abs(pagina.numero - paginaActual) <= 2 && score > 0) {
+                } else if (Math.abs(pageNum - paginaActual) <= 2 && score > 0) {
                     score += 1.0
                 }
 
                 if (score >= umbralMinimo) {
-                    candidateFragments.add(FragmentScore(pagina.numero, bloqueLimpio, score, conceptsMatched))
+                    candidateFragments.add(FragmentScore(pageNum, bloqueLimpio, score, conceptsMatched))
+                    if (candidateFragments.size > 80) {
+                        candidateFragments.sortByDescending { it.score }
+                        while (candidateFragments.size > 40) {
+                            candidateFragments.removeAt(candidateFragments.lastIndex)
+                        }
+                    }
                 }
+            }
+        }
+
+        val hasDiskStorage = if (context != null && documentId.isNotBlank()) {
+            com.example.util.DocumentPageStorage.getDocumentJsonFile(context, documentId).exists()
+        } else false
+
+        if (context != null && hasDiskStorage) {
+            com.example.util.DocumentPageStorage.streamAllPages(context, documentId) { num, txt ->
+                processPageBlock(num, txt)
+            }
+        } else {
+            paginas.forEach { pagina ->
+                processPageBlock(pagina.numero, pagina.texto)
             }
         }
 
@@ -175,11 +197,56 @@ class JurisTechAiService {
         val mejores = candidateFragments.take(3)
 
         if (mejores.isEmpty()) {
-            return@withContext "No encontré información suficiente para responder esta pregunta dentro del documento."
+            return@withContext "No encuentro información suficiente sobre eso en el documento cargado."
         }
 
-        // FORMATO LÍTÉRAL EXIGIDO
+        // Si hay API key de Gemini configurada, sintetizar respuesta natural conversacional citando páginas y pasajes
+        if (com.example.ai.GeminiApiClient.hasValidApiKey()) {
+            val contextBlocks = mejores.joinToString("\n---\n") { "Página ${it.pagina}:\n${it.texto}" }
+            val historyContext = historialConversacion.takeLast(4).joinToString("\n") {
+                "${if (it.isUser) "Usuario" else "Asistente"}: ${it.texto.take(300)}"
+            }
+            val prompt = """
+Documento jurídico: "$documentTitle"
+Contexto de conversación previa:
+$historyContext
+
+Consulta del usuario: "$pregunta"
+
+Pasajes auténticos recuperados del documento activo:
+$contextBlocks
+
+Instrucciones estrictas:
+1. Responde de forma clara, natural y precisa basándote ESTRICTAMENTE en los pasajes recuperados.
+2. Cita siempre la página real (ej. "Página ${mejores.first().pagina}") y el artículo/capítulo si aparece en el fragmento.
+3. Si el texto no contiene información suficiente para responder, di textualmente: "No encuentro información suficiente sobre eso en el documento cargado."
+4. Distingue claramente lo que afirma el documento de cualquier inferencia explicativa.
+5. No inventes legislación ni asumas que una norma sigue vigente solo porque el libro la cite; si la pregunta alude a vigencia actual, advierte que se requiere verificación externa separada.
+6. Redacta de forma fluida y clara para lectura en voz alta (TTS).
+7. Incluye al final:
+Texto encontrado en el documento:
+${mejores.first().texto}
+
+Página ${mejores.first().pagina}
+""".trimIndent()
+
+            val geminiResult = com.example.ai.GeminiApiClient.generateContent(
+                prompt = prompt,
+                systemInstruction = "Eres el asistente jurídico de JurisReader. Respondes consultas con máximo rigor basándote únicamente en los pasajes del documento activo suministrados y citando las páginas reales."
+            )
+
+            val generated = geminiResult.getOrNull()
+            if (!generated.isNullOrBlank()) {
+                return@withContext generated.trim()
+            }
+        }
+
+        // FORMATO LÍTÉRAL EXIGIDO / LOCAL OFFLINE
         val respuesta = java.lang.StringBuilder()
+        val esConsultaVigencia = pregunta.lowercase().let { it.contains("vigente") || it.contains("vigencia") || it.contains("derogad") }
+        if (esConsultaVigencia) {
+            respuesta.append("Nota de rigor jurídico: La cita refleja el texto del documento activo. La vigencia actual de las normas citadas debe verificarse en la legislación vigente actualizada.\n\n")
+        }
         respuesta.append("Texto encontrado en el documento:\n")
         mejores.forEach { frag ->
             respuesta.append("${frag.texto}\n\nPágina ${frag.pagina}\n\n")
